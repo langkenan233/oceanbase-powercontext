@@ -41,6 +41,8 @@ from powercontext.builtin.artifacts.topic_memory import (
     TopicMemoryProjection,
     TopicMemoryProjectionError,
     TopicMemorySearchMode,
+    TopicMemorySearchChannels,
+    TopicMemoryChannelHit,
     TopicMemorySearchRequest,
     TopicMemorySearchResult,
     TopicMemoryStorageInvariantError,
@@ -54,6 +56,7 @@ from powercontext.builtin.persistence.supervision import database_utc_now
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_HEADS_TABLE,
     ARTIFACTS_TABLE,
+    SOURCE_LIFECYCLE_NODES_TABLE,
     TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE,
     TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
     TOPIC_MEMORY_RETRIEVAL_SHAPE_TABLE,
@@ -487,6 +490,9 @@ class TopicMemoryRepository:
             admission=admission,
         )
         channels = await self.index.search(connection, scope_id, request)
+        suppressed = await self._suppressed_topics(connection, scope_id)
+        if suppressed:
+            channels = _without_suppressed(channels, suppressed)
         await self._check_retrieval_shape(connection)
         outcome = _fuse_topic_memory_rankings(query, channels, limit, mode=used_mode, admission=admission)
         return TopicMemorySearchResult(
@@ -500,6 +506,21 @@ class TopicMemoryRepository:
                 rejected=outcome.rejected,
             ),
         )
+
+    async def _suppressed_topics(self, connection: AsyncConnection, scope_id: str) -> frozenset[str]:
+        """Return Topic artifacts whose registered evidence is currently unavailable."""
+
+        rows = (
+            await connection.execute(
+                select(SOURCE_LIFECYCLE_NODES_TABLE.c.artifact_id).where(
+                    SOURCE_LIFECYCLE_NODES_TABLE.c.scope_id == scope_id,
+                    SOURCE_LIFECYCLE_NODES_TABLE.c.family == "topic",
+                    SOURCE_LIFECYCLE_NODES_TABLE.c.available.is_(False),
+                    SOURCE_LIFECYCLE_NODES_TABLE.c.artifact_id.is_not(None),
+                )
+            )
+        ).scalars()
+        return frozenset(str(value) for value in rows)
 
     async def _activate(
         self,
@@ -779,6 +800,25 @@ def _aware_utc(value: object) -> datetime:
 
 def _stored_utc(value: datetime) -> datetime:
     return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _without_suppressed(
+    channels: TopicMemorySearchChannels,
+    suppressed: frozenset[str],
+) -> TopicMemorySearchChannels:
+    """Drop withdrawn Topics from every channel before ranking is fused."""
+
+    def keep(hits: tuple[TopicMemoryChannelHit, ...]) -> tuple[TopicMemoryChannelHit, ...]:
+        return tuple(hit for hit in hits if hit.artifact_ref.artifact_id not in suppressed)
+
+    return channels.model_copy(
+        update={
+            "topic_fts": keep(channels.topic_fts),
+            "topic_vector": keep(channels.topic_vector),
+            "detail_fts": keep(channels.detail_fts),
+            "detail_vector": keep(channels.detail_vector),
+        }
+    )
 
 
 __all__ = ["TopicMemoryRepository"]
