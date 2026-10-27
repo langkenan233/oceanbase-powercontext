@@ -57,6 +57,11 @@ _LENGTH_FLOOR = 400
 _STATEMENT_WEIGHT = 8.0
 _INDEX_CACHE_SIZE = 1
 
+# The standard text projection prefixes the document id to the page text and becomes one Memory
+# entry, which may not exceed 8192 UTF-8 bytes. A dense filing page can be larger than that, so
+# the parsed text is bounded to the remaining budget instead of failing the whole document.
+_MEMORY_TEXT_LIMIT = 8192
+
 # Question words that carry no evidence signal in a filing. They are dropped before ranking so
 # that a long conversational ask does not outweigh the two or three terms that identify a page.
 _QUERY_FUNCTION_WORDS = frozenset(
@@ -101,6 +106,8 @@ _FINANCE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "lawsuit": ("litigation", "proceedings", "claims"),
     "lawsuits": ("litigation", "proceedings", "claims"),
     "legal": ("litigation", "proceedings", "claims"),
+    "ppe": ("property", "plant", "equipment"),
+    "ppne": ("property", "plant", "equipment"),
     "profit": ("income", "operating"),
     "restructuring": ("severance", "impairment", "productivity"),
     "revenue": ("net", "sales"),
@@ -108,6 +115,8 @@ _FINANCE_SYNONYMS: dict[str, tuple[str, ...]] = {
 
 # A page that states one of these headings is a primary financial statement. Numeric and
 # metric questions are answered there even when the page never repeats the question's words.
+_STATEMENT_TITLE_TERMS = 24
+_TOC_LABELS = frozenset({"table of contents", "t able of contents", "contents"})
 _STATEMENT_SIGNATURES = (
     "consolidated statements of income",
     "consolidated statement of income",
@@ -149,6 +158,10 @@ _METRIC_CUES = (
     "net",
     "cost",
     "balance sheet",
+    "capital intensive",
+    "capital-intensive",
+    "ppne",
+    "ppe",
 )
 
 _INDEX_CACHE: OrderedDict[tuple[str, int, int], _PageIndex] = OrderedDict()
@@ -205,21 +218,33 @@ def parse_pdf_document(value: PDFDocumentInput, /) -> tuple[PDFPageInput, ...]:
     content = _require_content(value.content)
     reader = _open_reader(content)
     digest = hashlib.sha256(content).hexdigest()
+    budget = _MEMORY_TEXT_LIMIT - len(document_id.encode("utf-8")) - 1
     pages: list[PDFPageInput] = []
     try:
         for index, page in enumerate(reader.pages):
             text = page.extract_text()
+            normalized = text if isinstance(text, str) else ""
             pages.append(
                 PDFPageInput(
                     document_id=document_id,
                     document_sha256=digest,
                     page_number=index + 1,
-                    text=text if isinstance(text, str) else "",
+                    text=_bounded_page_text(normalized, budget),
                 )
             )
     except Exception as error:  # any page failure must fail the whole document
         raise ValueError("PDF document must be fully readable page by page") from error
     return tuple(pages)
+
+
+def _bounded_page_text(text: str, budget: int) -> str:
+    """Keep one page inside the Memory text budget by dropping only trailing words."""
+
+    if budget <= 0 or len(text.encode("utf-8")) <= budget:
+        return text
+    trimmed = text.encode("utf-8")[:budget].decode("utf-8", "ignore")
+    cut = trimmed.rfind(" ")
+    return trimmed[:cut] if cut > budget // 2 else trimmed
 
 
 class PDFPageSourceAdapter:
@@ -494,8 +519,19 @@ def _heading(text: str) -> str:
 
 
 def _statement_page(text: str) -> float:
-    head = " ".join(text.casefold().split())[:1200]
-    return 1.0 if any(signature in head for signature in _STATEMENT_SIGNATURES) else 0.0
+    # Only the page title decides this: a note or an auditor report that merely mentions the
+    # statements further down must not be promoted over the statement pages themselves.
+    body = text.split("\n", 1)[1] if "\n" in text else text
+    head: list[str] = []
+    for line in body.splitlines():
+        words = _terms(line)
+        if not words or " ".join(words) in _TOC_LABELS:
+            continue
+        head.extend(words)
+        if len(head) >= _STATEMENT_TITLE_TERMS:
+            break
+    joined = " ".join(head)
+    return 1.0 if any(signature in joined for signature in _STATEMENT_SIGNATURES) else 0.0
 
 
 def _metric_cue(question: str) -> float:
