@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
+from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 from powercontext.builtin.persistence.supervision import ArtifactProcessingFence, ArtifactProcessingLeaseRepository
 from powercontext.builtin.persistence.tables import PROFILE_POLICIES_TABLE, SOURCE_JOURNAL_HEADS_TABLE
@@ -74,3 +75,49 @@ class SourceProcessingPendingProvider:
                 if intent is None or intent.dirty_generation == intent.clean_generation:
                     await intents.mark_dirty(connection, scope, self._binding)
         return str(rows[-1][0]) if len(rows) == limit else None
+
+    async def request_reached(
+        self,
+        after_scope_id: str | None,
+        limit: int,
+        threshold: int,
+        *,
+        fence: ArtifactProcessingFence,
+    ) -> tuple[str | None, int]:
+        """Accept one invocation wherever unconsumed journal entries reach the threshold.
+
+        Counting uses persisted journal identity only: replayed Source identities and receipt
+        trust upgrades do not advance the head, so they cannot start processing. A Scope keeps
+        its own cursor and threshold; another Scope's progress never substitutes for it.
+        """
+
+        heads = SOURCE_JOURNAL_HEADS_TABLE
+        statement = select(heads.c.scope_id, heads.c.position).order_by(heads.c.scope_id).limit(limit)
+        if after_scope_id is not None:
+            statement = statement.where(heads.c.scope_id > after_scope_id)
+        if self._family == "profile":
+            statement = statement.join(PROFILE_POLICIES_TABLE, PROFILE_POLICIES_TABLE.c.scope_id == heads.c.scope_id)
+            statement = statement.where(PROFILE_POLICIES_TABLE.c.generation_enabled.is_(True))
+        accepted = 0
+        async with self._database.transaction() as connection:
+            await ArtifactProcessingLeaseRepository().require_fence(connection, fence)
+            rows = (await connection.execute(statement)).all()
+            intents = ArtifactProcessingIntentRepository()
+            cursors = SourceCursorRepository()
+            pending = ArtifactProcessingPendingRepository()
+            for scope, high in rows:
+                cursor = await cursors.load(connection, scope, self._binding)
+                consumed = 0 if cursor is None else cursor.cursor.sequence
+                if int(high) - consumed < threshold:
+                    continue
+                intent = await intents.load(connection, scope, self._binding)
+                if intent is not None and intent.requested_generation > intent.handled_generation:
+                    # An accepted invocation is already responsible for this input.
+                    continue
+                if self._family == "topic-memory":
+                    # Freeze the wave head so the remaining windows finish under the
+                    # acceptance that already happened, without re-applying the threshold.
+                    await pending.request_flush(connection, scope, self._binding)
+                await intents.request(connection, scope, self._binding)
+                accepted += 1
+        return (str(rows[-1][0]) if len(rows) == limit else None), accepted

@@ -117,6 +117,8 @@ class ArtifactProcessingBinding:
     # Only automatic admission is filtered; already accepted requests retain
     # their own Worker authorization and domain completion semantics.
     automatic_scope_filter: Callable[[AsyncConnection, tuple[str, ...]], Awaitable[frozenset[str]]] | None = None
+    # A positive count starts processing once this many journal entries are unconsumed.
+    source_count_threshold: int | None = None
 
     def __post_init__(self) -> None:
         if not self.binding_name or self.binding_name != self.binding_name.strip():
@@ -138,6 +140,10 @@ class ArtifactProcessingBinding:
                 raise ValueError("interval and cron cannot both be enabled")  # noqa: TRY003
         if self.cron is not None:
             CronTrigger.from_crontab(self.cron, timezone=ZoneInfo(self.timezone))
+        if self.source_count_threshold is not None and (
+            type(self.source_count_threshold) is not int or self.source_count_threshold < 1
+        ):
+            raise ValueError("source_count_threshold must be a positive integer")  # noqa: TRY003
 
 
 class _WorkerResultSender(Protocol):
@@ -397,6 +403,7 @@ class _FamilyState:
     scan_in_progress: bool = False
     reconcile_after: str | None = None
     reconcile_complete: bool = False
+    count_after: str | None = None
     notification_at_start: int = 0
     discovery_pending: bool = True
     next_schedule_at: float | None = None
@@ -623,6 +630,7 @@ class ArtifactProcessingSupervisor:
             if discoverable:
                 try:
                     async with asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS):
+                        await self._request_count_reached(state)
                         await self._discover(state)
                     state.degraded = False
                 except ArtifactProcessingLeadershipLostError:
@@ -635,6 +643,29 @@ class ArtifactProcessingSupervisor:
                     state.discovery_seconds = asyncio.get_running_loop().time() - now
             await self._activate_retries(state)
             await self._dispatch(state)
+
+    async def _request_count_reached(self, state: _FamilyState) -> None:
+        """Accept one invocation wherever the unconsumed journal reaches the count threshold.
+
+        The count never replaces the time condition or an explicit flush: it is one more way for
+        a busy Scope to start work without waiting. A completed page restarts the keyset so new
+        journal entries are seen on the next pass.
+        """
+
+        threshold = state.binding.source_count_threshold
+        if threshold is None:
+            return
+        request_reached = getattr(state.binding.pending_provider, "request_reached", None)
+        if request_reached is None:
+            return
+        state.count_after, accepted = await request_reached(
+            state.count_after,
+            _DISCOVERY_PAGE_SIZE,
+            threshold,
+            fence=self._require_current_fence(),
+        )
+        if accepted:
+            state.discovery_pending = True
 
     async def _discover(self, state: _FamilyState) -> None:
         binding = state.binding
@@ -1059,6 +1090,7 @@ class ArtifactProcessingSupervisor:
             state.retries.clear()
             state.requested_after = state.scan_after = state.scan_generation = 0
             state.scan_in_progress = False
+            state.count_after = None
             state.discovery_pending = True
 
     async def _reap_unconfirmed_exits(self) -> None:
@@ -1093,6 +1125,10 @@ class ArtifactProcessingSupervisor:
                 continue
             if state.next_schedule_at is not None:
                 deadlines.append(state.next_schedule_at)
+            if state.binding.source_count_threshold is not None:
+                # Journal growth does not notify the Supervisor, so a count condition has to
+                # re-check on a bounded tick instead of waiting for an unrelated wake-up.
+                deadlines.append(now + self._tick)
             if state.discovery_pending or state.scan_in_progress or not state.reconcile_complete or state.degraded:
                 deadlines.append(max(now, state.next_discovery_at))
         return None if not deadlines else max(0.001, min(deadlines) - now)
