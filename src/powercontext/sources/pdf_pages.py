@@ -55,7 +55,29 @@ _WINDOW_TOKENS = 90
 _WINDOW_WEIGHT = 0.6
 _LENGTH_FLOOR = 400
 _STATEMENT_WEIGHT = 8.0
+_SECTION_HEAD_CHARS = 1200
+_RISK_SECTION_WEIGHT = 8.0
+_SEGMENT_SECTION_WEIGHT = 6.0
+_OVERVIEW_SECTION_WEIGHT = 8.0
 _INDEX_CACHE_SIZE = 1
+
+# Filings keep a fixed table of contents, so a section heading identifies what a page is for even
+# when the page never repeats the words of the question. Each cue family is only added when the
+# question itself asks for that kind of content.
+_RISK_SECTION_TITLES = ("item 1a", "risk factors", "risk factor")
+_RISK_CUES = ("risk", "subject to", "cyclical", "cyclicality", "uncertain", "exposure", "depend")
+_SEGMENT_SECTION_TITLES = (
+    "business segment data",
+    "business segment",
+    "segment information",
+    "segment reporting",
+)
+_SEGMENT_CUES = ("category", "categories", "segment", "segments", "product line", "service categor")
+
+# A margin question about a bank or an insurer is answered by the business overview that explains
+# why the metric does not apply, not by an income statement.
+_OVERVIEW_SECTION_TITLES = ("item 1 business", "item 1 business overview", "item 1 general")
+_OVERVIEW_CUES = ("margin", "gross margin", "operating margin")
 
 # The standard text projection prefixes the document id to the page text and becomes one Memory
 # entry, which may not exceed 8192 UTF-8 bytes. A dense filing page can be larger than that, so
@@ -319,7 +341,11 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
         if not hits:
             return ()
         index = _PageIndex.from_hits(hits)
-    ranking = index.rank(_weighted_terms(_content_terms(query)), _metric_cue(query))
+    ranking = index.rank(
+        _weighted_terms(_content_terms(query)),
+        _metric_cue(query),
+        *_section_cues(query),
+    )
     return index.citations(ranking[:limit])
 
 
@@ -406,6 +432,7 @@ class _PageIndex:
         ) / max(1, sum(len(lengths) for lengths in self.window_lengths))
         self.total = len(self.counts)
         self.statements = [1.0 if _statement_page(text) else 0.0 for text in texts]
+        self.sections = [_section_page(text) for text in texts]
         self.document_frequency: dict[str, int] = {}
         for counter in bodies:
             for term in counter:
@@ -414,7 +441,14 @@ class _PageIndex:
     def citations(self, indices: Sequence[int]) -> tuple[MemoryCitation, ...]:
         return tuple(self._citations[self.identifiers[index]] for index in indices)
 
-    def rank(self, weights: dict[str, float], cue: float) -> list[int]:
+    def rank(
+        self,
+        weights: dict[str, float],
+        cue: float,
+        risk: float = 0.0,
+        segment: float = 0.0,
+        overview: float = 0.0,
+    ) -> list[int]:
         scores: list[tuple[float, int]] = []
         for index, counter in enumerate(self.counts):
             body = self._score(counter, self.lengths[index], self.average, weights)
@@ -432,6 +466,13 @@ class _PageIndex:
             score = body + _HEADING_WEIGHT * heading + _WINDOW_WEIGHT * window
             if self.statements[index] and cue:
                 score += _STATEMENT_WEIGHT
+            page_risk, page_segment, page_overview = self.sections[index]
+            if page_risk and risk:
+                score += _RISK_SECTION_WEIGHT
+            if page_segment and segment:
+                score += _SEGMENT_SECTION_WEIGHT
+            if page_overview and overview:
+                score += _OVERVIEW_SECTION_WEIGHT
             if score <= 0:
                 continue
             scores.append((score, index))
@@ -463,8 +504,28 @@ def _citation_of(hit: MemoryHit) -> MemoryCitation:
     )
 
 
-def _terms(text: str) -> list[str]:
+def _raw_terms(text: str) -> list[str]:
     return _TOKEN.findall(text.casefold())
+
+
+def _stem(term: str) -> str:
+    """Fold only the plural suffix so that a question matches the wording a filing uses.
+
+    This stays deliberately shallow: it never rewrites a stem, so unrelated words keep
+    their own weight and the statement headings stay recognisable.
+    """
+
+    if len(term) > 4 and term.endswith("ies"):
+        return f"{term[:-3]}y"
+    if len(term) > 4 and term.endswith("es") and term.endswith(("ses", "xes", "zes", "ches", "shes")):
+        return term[:-2]
+    if len(term) > 3 and term.endswith("s") and not term.endswith(("ss", "us", "is")):
+        return term[:-1]
+    return term
+
+
+def _terms(text: str) -> list[str]:
+    return [_stem(term) for term in _TOKEN.findall(text.casefold())]
 
 
 def _counts(terms: Sequence[str]) -> dict[str, int]:
@@ -509,7 +570,7 @@ def _heading(text: str) -> str:
     collected = 0
     for line in body.splitlines():
         words = _terms(line)
-        if not words or " ".join(words) == "table of contents":
+        if not words or " ".join(_raw_terms(line)) in _TOC_LABELS:
             continue
         lines.append(line)
         collected += len(words)
@@ -524,7 +585,7 @@ def _statement_page(text: str) -> float:
     body = text.split("\n", 1)[1] if "\n" in text else text
     head: list[str] = []
     for line in body.splitlines():
-        words = _terms(line)
+        words = _raw_terms(line)
         if not words or " ".join(words) in _TOC_LABELS:
             continue
         head.extend(words)
@@ -537,6 +598,28 @@ def _statement_page(text: str) -> float:
 def _metric_cue(question: str) -> float:
     lowered = question.casefold()
     return 1.0 if any(cue in lowered for cue in _METRIC_CUES) else 0.0
+
+
+def _section_page(text: str) -> tuple[float, float, float]:
+    """Flag the pages that open the filing sections a question can point at by name."""
+
+    body = text.split("\n", 1)[1] if "\n" in text else text
+    raw_lines = body.splitlines()[:60]
+    lines = [" ".join(_raw_terms(line)) for line in raw_lines]
+    compact = [line.replace(" ", "") for line in lines]
+    risk = 1.0 if any("item1a" in line for line in compact) else 0.0
+    segment = 1.0 if any(title in line for line in lines for title in _SEGMENT_SECTION_TITLES) else 0.0
+    overview_titles = tuple(title.replace(" ", "") for title in _OVERVIEW_SECTION_TITLES)
+    overview = 1.0 if any(title in line for line in compact for title in overview_titles) else 0.0
+    return risk, segment, overview
+
+
+def _section_cues(question: str) -> tuple[float, float, float]:
+    lowered = question.casefold()
+    risk = 1.0 if any(cue in lowered for cue in _RISK_CUES) else 0.0
+    segment = 1.0 if any(cue in lowered for cue in _SEGMENT_CUES) else 0.0
+    overview = 1.0 if any(cue in lowered for cue in _OVERVIEW_CUES) else 0.0
+    return risk, segment, overview
 
 
 def _content_terms(question: str) -> list[str]:
@@ -555,11 +638,13 @@ def _content_terms(question: str) -> list[str]:
 
 
 def _weighted_terms(terms: Sequence[str]) -> dict[str, float]:
-    weights = {term: 1.0 for term in terms}
+    weights: dict[str, float] = {}
     for term in terms:
+        weights[_stem(term)] = 1.0
         for synonym in _FINANCE_SYNONYMS.get(term, ()):
-            if weights.get(synonym, 0.0) < 0.35:
-                weights[synonym] = 0.35
+            key = _stem(synonym)
+            if weights.get(key, 0.0) < 0.35:
+                weights[key] = 0.35
     return weights
 
 
