@@ -79,6 +79,22 @@ _SEGMENT_CUES = ("category", "categories", "segment", "segments", "product line"
 _OVERVIEW_SECTION_TITLES = ("item 1 business", "item 1 business overview", "item 1 general")
 _OVERVIEW_CUES = ("margin", "gross margin", "operating margin")
 
+# A "how much did it change" question is answered by the summary table that lines two fiscal
+# years up side by side.
+_SUMMARY_SECTION_TITLES = (
+    "summary of financial performance",
+    "selected financial data",
+    "summary of selected financial data",
+)
+_SUMMARY_CUES = ("how much", "changed", "change in", "compared", "versus", "increase", "decrease")
+
+_SECTION_WEIGHTS = {
+    "risk": _RISK_SECTION_WEIGHT,
+    "segment": _SEGMENT_SECTION_WEIGHT,
+    "overview": _OVERVIEW_SECTION_WEIGHT,
+    "summary": 6.0,
+}
+
 # The standard text projection prefixes the document id to the page text and becomes one Memory
 # entry, which may not exceed 8192 UTF-8 bytes. A dense filing page can be larger than that, so
 # the parsed text is bounded to the remaining budget instead of failing the whole document.
@@ -344,7 +360,7 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
     ranking = index.rank(
         _weighted_terms(_content_terms(query)),
         _metric_cue(query),
-        *_section_cues(query),
+        _section_cues(query),
     )
     return index.citations(ranking[:limit])
 
@@ -445,9 +461,7 @@ class _PageIndex:
         self,
         weights: dict[str, float],
         cue: float,
-        risk: float = 0.0,
-        segment: float = 0.0,
-        overview: float = 0.0,
+        sections: frozenset[str] = frozenset(),
     ) -> list[int]:
         scores: list[tuple[float, int]] = []
         for index, counter in enumerate(self.counts):
@@ -466,13 +480,8 @@ class _PageIndex:
             score = body + _HEADING_WEIGHT * heading + _WINDOW_WEIGHT * window
             if self.statements[index] and cue:
                 score += _STATEMENT_WEIGHT
-            page_risk, page_segment, page_overview = self.sections[index]
-            if page_risk and risk:
-                score += _RISK_SECTION_WEIGHT
-            if page_segment and segment:
-                score += _SEGMENT_SECTION_WEIGHT
-            if page_overview and overview:
-                score += _OVERVIEW_SECTION_WEIGHT
+            for tag in sections & self.sections[index]:
+                score += _SECTION_WEIGHTS[tag]
             if score <= 0:
                 continue
             scores.append((score, index))
@@ -600,26 +609,36 @@ def _metric_cue(question: str) -> float:
     return 1.0 if any(cue in lowered for cue in _METRIC_CUES) else 0.0
 
 
-def _section_page(text: str) -> tuple[float, float, float]:
-    """Flag the pages that open the filing sections a question can point at by name."""
+def _section_page(text: str) -> frozenset[str]:
+    """Flag the sections a page opens, judged from the headings the page itself prints."""
 
     body = text.split("\n", 1)[1] if "\n" in text else text
-    raw_lines = body.splitlines()[:60]
-    lines = [" ".join(_raw_terms(line)) for line in raw_lines]
+    lines = [" ".join(_raw_terms(line)) for line in body.splitlines()[:60]]
     compact = [line.replace(" ", "") for line in lines]
-    risk = 1.0 if any("item1a" in line for line in compact) else 0.0
-    segment = 1.0 if any(title in line for line in lines for title in _SEGMENT_SECTION_TITLES) else 0.0
-    overview_titles = tuple(title.replace(" ", "") for title in _OVERVIEW_SECTION_TITLES)
-    overview = 1.0 if any(title in line for line in compact for title in overview_titles) else 0.0
-    return risk, segment, overview
+    tags: set[str] = set()
+    if any("item1a" in line for line in compact):
+        tags.add("risk")
+    if any(title in line for line in lines for title in _SEGMENT_SECTION_TITLES):
+        tags.add("segment")
+    if any(title.replace(" ", "") in line for line in compact for title in _OVERVIEW_SECTION_TITLES):
+        tags.add("overview")
+    if any(title in line for line in lines for title in _SUMMARY_SECTION_TITLES):
+        tags.add("summary")
+    return frozenset(tags)
 
 
-def _section_cues(question: str) -> tuple[float, float, float]:
+def _section_cues(question: str) -> frozenset[str]:
     lowered = question.casefold()
-    risk = 1.0 if any(cue in lowered for cue in _RISK_CUES) else 0.0
-    segment = 1.0 if any(cue in lowered for cue in _SEGMENT_CUES) else 0.0
-    overview = 1.0 if any(cue in lowered for cue in _OVERVIEW_CUES) else 0.0
-    return risk, segment, overview
+    tags: set[str] = set()
+    if any(cue in lowered for cue in _RISK_CUES):
+        tags.add("risk")
+    if any(cue in lowered for cue in _SEGMENT_CUES):
+        tags.add("segment")
+    if any(cue in lowered for cue in _OVERVIEW_CUES):
+        tags.add("overview")
+    if any(cue in lowered for cue in _SUMMARY_CUES):
+        tags.add("summary")
+    return frozenset(tags)
 
 
 def _content_terms(question: str) -> list[str]:
