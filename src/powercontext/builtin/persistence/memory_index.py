@@ -202,6 +202,12 @@ class CompositeMemoryIndex:
             tag_filter=all(index.capabilities.tag_filter for index in indexes),
         )
         self.tables = tuple(table for index in indexes for table in index.tables)
+        # A backend that can serve both channels from one native statement claims hybrid
+        # candidates; the remaining single-channel queries keep their own strategy.
+        self._hybrid = next(
+            (index for index in indexes if callable(getattr(index, "search_hybrid", None))),
+            None,
+        )
 
     async def initialize(self, connection: AsyncConnection, /) -> None:
         for index in self.indexes:
@@ -247,6 +253,8 @@ class CompositeMemoryIndex:
         request: MemorySearchRequest,
         /,
     ) -> MemorySearchChannels:
+        if request.mode == "hybrid" and self._hybrid is not None:
+            return await self._hybrid.search_hybrid(connection, scope_id, request)
         fts: tuple[MemoryChannelHit, ...] = ()
         vector: tuple[MemoryChannelHit, ...] = ()
         for index in self.indexes:
