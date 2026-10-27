@@ -20,6 +20,7 @@ import hashlib
 import io
 import math
 import re
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -34,23 +35,27 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 
 if TYPE_CHECKING:
     from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryHit
-    from powercontext.builtin.runtime.models import MemoryEntriesPage, SearchMemoryRequest
+    from powercontext.builtin.runtime.models import MemoryEntriesPage
 
 PDF_PAGE_SOURCE_NAME = "pdf-page"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_NAME_PREFIX = "pdf"
 _FALLBACK_IDENTITY_DIGEST_LENGTH = 32
-_SEARCH_POOL_MINIMUM = 40
-_SEARCH_POOL_FACTOR = 10
-_SEARCH_POOL_MAXIMUM = 500
-_SEARCH_BONUS_WEIGHT = 0.1
 _TOKEN = re.compile(r"[a-z]+|\d+")
+_SENTENCE_BREAK = re.compile(r"(?<=[.?!])\s+")
+
+# Ranking constants of the offline page model. They are fixed: the retriever never trains,
+# never calls a model and never sees the evaluation labels.
 _BM25_K1 = 1.2
 _BM25_B = 0.75
 _HEADING_TERMS = 60
 _HEADING_WEIGHT = 0.6
-_SYNONYM_WEIGHT = 0.35
+_WINDOW_TOKENS = 90
+_WINDOW_WEIGHT = 0.6
+_LENGTH_FLOOR = 400
+_STATEMENT_WEIGHT = 8.0
+_INDEX_CACHE_SIZE = 1
 
 # Question words that carry no evidence signal in a filing. They are dropped before ranking so
 # that a long conversational ask does not outweigh the two or three terms that identify a page.
@@ -65,8 +70,25 @@ _QUERY_FUNCTION_WORDS = frozenset(
     """.split()
 )
 
-# Generic filing vocabulary, not document answers: a question usually names a concept with one
-# wording while a filing states it with another. Weighted below the question's own terms.
+# Sentences that only tell the reader how to answer. They dominate a bag-of-words query with
+# words such as "statement", "cash" and "income" that point at every financial table at once.
+_INSTRUCTION_MARKERS = (
+    "state that",
+    "explain why",
+    "respond to the question",
+    "give a response",
+    "relying on the details",
+    "assuming the perspective",
+    "answer in usd",
+    "in your answer",
+    "please state",
+    "if the ",
+    "if it is",
+    "if this",
+)
+
+# Generic filing vocabulary, not document answers: a question names a concept with one wording
+# while a filing states it with another. Weighted below the question's own terms.
 _FINANCE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "battles": ("litigation", "proceedings", "claims"),
     "capex": ("capital", "expenditures"),
@@ -74,8 +96,8 @@ _FINANCE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "dividend": ("per", "share", "dividends"),
     "ebitda": ("operating", "income", "depreciation", "amortization"),
     "employee": ("employees", "headcount"),
-    "geographies": ("countries", "regions", "markets", "operate"),
-    "geography": ("countries", "regions", "markets", "operate"),
+    "geographies": ("geographic", "regions", "countries", "markets", "operate"),
+    "geography": ("geographic", "regions", "countries", "markets", "operate"),
     "lawsuit": ("litigation", "proceedings", "claims"),
     "lawsuits": ("litigation", "proceedings", "claims"),
     "legal": ("litigation", "proceedings", "claims"),
@@ -83,6 +105,53 @@ _FINANCE_SYNONYMS: dict[str, tuple[str, ...]] = {
     "restructuring": ("severance", "impairment", "productivity"),
     "revenue": ("net", "sales"),
 }
+
+# A page that states one of these headings is a primary financial statement. Numeric and
+# metric questions are answered there even when the page never repeats the question's words.
+_STATEMENT_SIGNATURES = (
+    "consolidated statements of income",
+    "consolidated statement of income",
+    "consolidated statements of operations",
+    "consolidated statement of operations",
+    "consolidated statements of earnings",
+    "consolidated statement of earnings",
+    "consolidated balance sheet",
+    "consolidated statements of cash flows",
+    "consolidated statement of cash flows",
+    "consolidated statements of comprehensive income",
+    "consolidated statements of changes in equity",
+    "consolidated statements of stockholders",
+    "consolidated statements of shareholders",
+)
+
+# Cues that the answer is a figure rather than a narrative.
+_METRIC_CUES = (
+    "margin",
+    "ratio",
+    "how much",
+    "largest",
+    "amount",
+    "percent",
+    "revenue",
+    "income",
+    "expense",
+    "tax",
+    "ebitda",
+    "cash flow",
+    "capex",
+    "liabilit",
+    "asset",
+    "debt",
+    "per share",
+    "dividend",
+    "operating",
+    "gross",
+    "net",
+    "cost",
+    "balance sheet",
+)
+
+_INDEX_CACHE: OrderedDict[tuple[str, int, int], _PageIndex] = OrderedDict()
 
 
 class PDFDocumentInput(BaseModel):
@@ -210,49 +279,61 @@ PDF_PAGE_SOURCE_DEFINITION: SourceDefinition[PDFPageInput, PDFPageSource, PDFPag
 async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[MemoryCitation, ...]:
     """Return exact citations of at most ``limit`` distinct physical pages for one question.
 
-    The scope's lexical search supplies candidates; the answer is then ranked offline over the
-    pages this Memory actually holds, so a page whose wording only partly overlaps the question
-    can still surface. Every returned citation is read back by the caller, so the offline stage
-    never invents an entry that the Memory does not store.
+    The page model ranks every page this Memory actually stores, so a page whose wording only
+    partly overlaps the question can still surface. Every returned citation is read back by the
+    caller, so the offline stage never invents an entry that the Memory does not hold.
     """
 
     query = _require_question(question)
     if limit < 1:
         return ()
-    candidates = await _search_candidates(memory, query, limit)
-    index = _PageIndex(await memory.list(), candidates)
+    listing = await memory.list()
+    index = _index_for(listing)
     if not index.identifiers:
-        return ()
-    ranking = index.rank(_weighted_terms(_content_terms(query)), index.bonus_map(candidates))
+        hits = await _search_candidates(memory, query, limit)
+        if not hits:
+            return ()
+        index = _PageIndex.from_hits(hits)
+    ranking = index.rank(_weighted_terms(_content_terms(query)), _metric_cue(query))
     return index.citations(ranking[:limit])
 
 
 async def _search_candidates(memory, query: str, limit: int) -> tuple[MemoryHit, ...]:
-    # The offline stage ranks every stored page on its own, so a backend that cannot run the
-    # lexical search channel only loses the extra signal, never the result.
+    # Imported lazily: ``powercontext.builtin`` imports this package, so a module-level import
+    # here would close a cycle between the Source layer and the Runtime layer.
+    from powercontext.builtin.runtime.models import SearchMemoryRequest
+
     try:
-        page = await memory.search(_search_request(query, limit))
+        page = await memory.search(SearchMemoryRequest(query=query, limit=max(limit, 20), mode="fts"))
     except Exception:  # a missing search capability must not fail retrieval
         return ()
     return page.hits
 
 
-def _search_request(query: str, limit: int) -> SearchMemoryRequest:
-    # Imported lazily: ``powercontext.builtin`` imports this package, so a module-level
-    # import here would close a cycle between the Source layer and the Runtime layer.
-    from powercontext.builtin.runtime.models import SearchMemoryRequest
+def _index_for(listing: MemoryEntriesPage) -> _PageIndex:
+    """Build the page model once per stored Memory revision and reuse it across questions."""
 
-    return SearchMemoryRequest(
-        query=query,
-        limit=min(_SEARCH_POOL_MAXIMUM, max(limit * _SEARCH_POOL_FACTOR, _SEARCH_POOL_MINIMUM)),
-        mode="fts",
+    reference = listing.memory_ref
+    key = (
+        reference.artifact_id if reference is not None else "",
+        reference.revision if reference is not None else 0,
+        len(listing.entries),
     )
+    cached = _INDEX_CACHE.get(key)
+    if cached is not None:
+        _INDEX_CACHE.move_to_end(key)
+        return cached
+    index = _PageIndex(listing)
+    _INDEX_CACHE[key] = index
+    while len(_INDEX_CACHE) > _INDEX_CACHE_SIZE:
+        _INDEX_CACHE.popitem(last=False)
+    return index
 
 
 class _PageIndex:
     """Rank every stored page of one scope with a fixed, offline lexical model."""
 
-    def __init__(self, listing: MemoryEntriesPage, candidates: Sequence[MemoryHit]) -> None:
+    def __init__(self, listing: MemoryEntriesPage) -> None:
         self.identifiers: list[str] = []
         self._citations: dict[str, MemoryCitation] = {}
         texts: list[str] = []
@@ -263,49 +344,72 @@ class _PageIndex:
             self.identifiers.append(identifier)
             self._citations[identifier] = record.citation
             texts.append(record.entry.text)
-        for hit in candidates:
+        self._build(texts)
+
+    @classmethod
+    def from_hits(cls, hits: Sequence[MemoryHit]) -> _PageIndex:
+        index = cls.__new__(cls)
+        index.identifiers = []
+        index._citations = {}
+        texts = []
+        for hit in hits:
             identifier = str(hit.entry_id)
-            if identifier in self._citations:
+            if identifier in index._citations:
                 continue
-            self.identifiers.append(identifier)
-            self._citations[identifier] = _citation_of(hit)
+            index.identifiers.append(identifier)
+            index._citations[identifier] = _citation_of(hit)
             texts.append(hit.text)
-        self.counts = [_term_counts(text) for text in texts]
-        self.headings = [_term_counts(_heading(text)) for text in texts]
-        self.lengths = [sum(counter.values()) for counter in self.counts]
-        self.heading_lengths = [sum(counter.values()) for counter in self.headings]
+        index._build(texts)
+        return index
+
+    def _build(self, texts: Sequence[str]) -> None:
+        bodies_text = _page_bodies(texts)
+        bodies = [_counts(_terms(text)) for text in bodies_text]
+        headings = [_counts(_terms(_heading(text))) for text in texts]
+        sequences = [_terms(text) for text in bodies_text]
+        windows = [_windows(sequence) for sequence in sequences]
+        self.counts = bodies
+        self.headings = headings
+        self.lengths = [max(sum(counter.values()), _LENGTH_FLOOR) for counter in bodies]
+        self.heading_lengths = [sum(counter.values()) for counter in headings]
+        self.windows = windows
+        self.window_lengths = [[max(sum(block.values()), 20) for block in blocks] for blocks in windows]
         self.average = sum(self.lengths) / max(1, len(self.lengths))
         self.heading_average = sum(self.heading_lengths) / max(1, len(self.heading_lengths))
+        self.window_average = sum(
+            sum(lengths) for lengths in self.window_lengths
+        ) / max(1, sum(len(lengths) for lengths in self.window_lengths))
         self.total = len(self.counts)
+        self.statements = [1.0 if _statement_page(text) else 0.0 for text in texts]
         self.document_frequency: dict[str, int] = {}
-        for counter in self.counts:
+        for counter in bodies:
             for term in counter:
                 self.document_frequency[term] = self.document_frequency.get(term, 0) + 1
 
     def citations(self, indices: Sequence[int]) -> tuple[MemoryCitation, ...]:
         return tuple(self._citations[self.identifiers[index]] for index in indices)
 
-    def bonus_map(self, candidates: Sequence[MemoryHit]) -> dict[str, float]:
-        bonus: dict[str, float] = {}
-        for position, hit in enumerate(candidates):
-            identifier = str(hit.entry_id)
-            if identifier not in bonus:
-                bonus[identifier] = _SEARCH_BONUS_WEIGHT * max(0.0, 1.0 - position / len(candidates))
-        return bonus
-
-    def rank(self, weights: dict[str, float], bonus: dict[str, float]) -> list[int]:
+    def rank(self, weights: dict[str, float], cue: float) -> list[int]:
         scores: list[tuple[float, int]] = []
         for index, counter in enumerate(self.counts):
-            score = self._score(counter, self.lengths[index], self.average, weights)
-            score += _HEADING_WEIGHT * self._score(
+            body = self._score(counter, self.lengths[index], self.average, weights)
+            heading = self._score(
                 self.headings[index],
                 self.heading_lengths[index],
                 self.heading_average,
                 weights,
             )
+            window = 0.0
+            for block, block_length in zip(self.windows[index], self.window_lengths[index]):
+                candidate = self._score(block, block_length, self.window_average, weights)
+                if candidate > window:
+                    window = candidate
+            score = body + _HEADING_WEIGHT * heading + _WINDOW_WEIGHT * window
+            if self.statements[index] and cue:
+                score += _STATEMENT_WEIGHT
             if score <= 0:
                 continue
-            scores.append((score * (1.0 + bonus.get(self.identifiers[index], 0.0)), index))
+            scores.append((score, index))
         scores.sort(key=lambda item: (-item[0], item[1]))
         return [index for _score, index in scores]
 
@@ -334,35 +438,92 @@ def _citation_of(hit: MemoryHit) -> MemoryCitation:
     )
 
 
-def _term_counts(text: str) -> dict[str, int]:
+def _terms(text: str) -> list[str]:
+    return _TOKEN.findall(text.casefold())
+
+
+def _counts(terms: Sequence[str]) -> dict[str, int]:
     counter: dict[str, int] = {}
-    for term in _TOKEN.findall(text.casefold()):
+    for term in terms:
         counter[term] = counter.get(term, 0) + 1
     return counter
 
 
+def _page_bodies(texts: Sequence[str]) -> list[str]:
+    """Drop the document-identity line that the text projection repeats above every page.
+
+    The identity line carries the document name and its fiscal year, so keeping it would make
+    those terms present on every page and flatten their statistical weight to nothing.
+    """
+
+    heads = [text.split("\n", 1)[0] for text in texts]
+    occurrences = _counts(heads)
+    bodies: list[str] = []
+    for text, head in zip(texts, heads):
+        if "\n" in text and occurrences.get(head, 0) > 1:
+            bodies.append(text.split("\n", 1)[1])
+        else:
+            bodies.append(text)
+    return bodies
+
+
+def _windows(terms: Sequence[str]) -> list[dict[str, int]]:
+    blocks: list[dict[str, int]] = []
+    for start in range(0, len(terms), _WINDOW_TOKENS):
+        counter = _counts(terms[start : start + _WINDOW_TOKENS])
+        if counter:
+            blocks.append(counter)
+    return blocks or [{}]
+
+
 def _heading(text: str) -> str:
-    # The first projection line carries the document identity, which is identical on every
-    # page of one document and therefore useless as a title signal.
+    # The first projection line carries the document identity, which is identical on every page
+    # of one document and therefore useless as a title signal.
     body = text.split("\n", 1)[1] if "\n" in text else text
-    return " ".join(_TOKEN.findall(body.casefold())[:_HEADING_TERMS])
+    lines: list[str] = []
+    collected = 0
+    for line in body.splitlines():
+        words = _terms(line)
+        if not words or " ".join(words) == "table of contents":
+            continue
+        lines.append(line)
+        collected += len(words)
+        if collected >= 12:
+            break
+    return " ".join(_terms("\n".join(lines) if lines else body)[:_HEADING_TERMS])
+
+
+def _statement_page(text: str) -> float:
+    head = " ".join(text.casefold().split())[:1200]
+    return 1.0 if any(signature in head for signature in _STATEMENT_SIGNATURES) else 0.0
+
+
+def _metric_cue(question: str) -> float:
+    lowered = question.casefold()
+    return 1.0 if any(cue in lowered for cue in _METRIC_CUES) else 0.0
 
 
 def _content_terms(question: str) -> list[str]:
     terms: list[str] = []
-    for term in _TOKEN.findall(question.casefold()):
-        if term in _QUERY_FUNCTION_WORDS or term in terms:
+    for sentence in _SENTENCE_BREAK.split(question):
+        lowered = sentence.casefold()
+        if any(marker in lowered for marker in _INSTRUCTION_MARKERS):
             continue
-        terms.append(term)
-    return terms
+        for term in _TOKEN.findall(lowered):
+            if term in _QUERY_FUNCTION_WORDS or term in terms:
+                continue
+            terms.append(term)
+    if terms:
+        return terms
+    return [term for term in _TOKEN.findall(question.casefold()) if term not in _QUERY_FUNCTION_WORDS]
 
 
 def _weighted_terms(terms: Sequence[str]) -> dict[str, float]:
     weights = {term: 1.0 for term in terms}
     for term in terms:
         for synonym in _FINANCE_SYNONYMS.get(term, ()):
-            if synonym not in weights or weights[synonym] < _SYNONYM_WEIGHT:
-                weights[synonym] = max(weights.get(synonym, 0.0), _SYNONYM_WEIGHT)
+            if weights.get(synonym, 0.0) < 0.35:
+                weights[synonym] = 0.35
     return weights
 
 
