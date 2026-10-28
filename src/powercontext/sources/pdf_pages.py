@@ -49,6 +49,9 @@ _SENTENCE_BREAK = re.compile(r"(?<=[.?!])\s+")
 _INLINE_SPACE = re.compile(r"[^\S\n]+")
 _WORD_CHARACTER = re.compile(r"[A-Za-z0-9]")
 _COMPACT = re.compile(r"[^a-z0-9]+")
+# A mark between two words. The platform counts a word with [a-z]+|\d+, so a mark never
+# carries a word of its own, but it does keep two words apart.
+_MARK = re.compile(r"[^\w\s]|_", re.UNICODE)
 _YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 _SHORT_YEAR = re.compile(r"(?i)(?:fy|fiscal\s+year|year)\s*'?(\d{2})(?!\d)")
 _FORM_MARKERS = re.compile(r"10K|10Q|8K|EARNINGS|Q[1-4]", re.IGNORECASE)
@@ -87,7 +90,19 @@ _SEGMENT_CUES = ("category", "categories", "segment", "segments", "product line"
 # A margin question about a bank or an insurer is answered by the business overview that explains
 # why the metric does not apply, not by an income statement.
 _OVERVIEW_SECTION_TITLES = ("item 1 business", "item 1 business overview", "item 1 general")
-_OVERVIEW_CUES = ("margin", "gross margin", "operating margin")
+_OVERVIEW_CUES = (
+    "margin",
+    "gross margin",
+    "operating margin",
+    "primary customer",
+    "customers",
+    "customer concentration",
+    "clients",
+    "geograph",
+    "region",
+    "operates in",
+    "products and services",
+)
 
 # A "how much did it change" question is answered by the summary table that lines two fiscal
 # years up side by side.
@@ -323,11 +338,22 @@ def _normalised_page_text(text: str) -> str:
 
 
 def _bounded_page_text(text: str, budget: int) -> str:
-    """Keep one page inside the Memory text budget by dropping only trailing words."""
+    """Keep one page inside the Memory text budget by dropping only trailing words.
+
+    A page that fits is kept as it is. A page that does not fit has to lose its tail, and
+    the tail is cut at a word boundary. Before the cut the marks of the page are turned
+    into spaces: a mark never carries a word of its own, so the page keeps every word it
+    had, but it spends fewer bytes on the marks and the cut lands on a boundary behind
+    every word instead of behind a whole run of words.
+    """
 
     if budget <= 0 or len(text.encode("utf-8")) <= budget:
         return text
-    trimmed = text.encode("utf-8")[:budget].decode("utf-8", "ignore")
+    roomy = _INLINE_SPACE.sub(" ", _MARK.sub(" ", text).replace("\n", " "))
+    raw = roomy.encode("utf-8")
+    if len(raw) <= budget:
+        return roomy
+    trimmed = raw[:budget].decode("utf-8", "ignore")
     cut = trimmed.rfind(" ")
     return trimmed[:cut] if cut > budget // 2 else trimmed
 
