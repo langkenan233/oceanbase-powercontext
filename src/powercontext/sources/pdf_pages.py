@@ -23,14 +23,14 @@ import re
 from collections import OrderedDict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from pydantic import BaseModel
 from pypdf import PdfReader
 
 from powercontext.limits import MAX_SOURCE_ID_LENGTH
 from powercontext.sources.definitions import AdapterSourceDefinition, SourceDefinition
-from powercontext.sources.models import Source, SourceMaterialization
+from powercontext.sources.models import Source, SourceMaterialization, SourceRef
 from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextEvidence
 
 if TYPE_CHECKING:
@@ -43,7 +43,10 @@ _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_NAME_PREFIX = "pdf"
 _FALLBACK_IDENTITY_DIGEST_LENGTH = 32
 _TOKEN = re.compile(r"[a-z]+|\d+")
+_WORD = re.compile(r"[A-Za-z0-9]+")
+_LETTER_WORD = re.compile(r"[A-Za-z]+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.?!])\s+")
+_INLINE_SPACE = re.compile(r"[^\S\n]+")
 
 # Ranking constants of the offline page model. They are fixed: the retriever never trains,
 # never calls a model and never sees the evaluation labels.
@@ -59,6 +62,7 @@ _SECTION_HEAD_CHARS = 1200
 _RISK_SECTION_WEIGHT = 8.0
 _SEGMENT_SECTION_WEIGHT = 6.0
 _OVERVIEW_SECTION_WEIGHT = 8.0
+_IDENTITY_BONUS = 10.0
 _INDEX_CACHE_SIZE = 1
 
 # Filings keep a fixed table of contents, so a section heading identifies what a page is for even
@@ -267,12 +271,26 @@ def parse_pdf_document(value: PDFDocumentInput, /) -> tuple[PDFPageInput, ...]:
                     document_id=document_id,
                     document_sha256=digest,
                     page_number=index + 1,
-                    text=_bounded_page_text(normalized, budget),
+                    text=_bounded_page_text(_normalised_page_text(normalized), budget),
                 )
             )
     except Exception as error:  # any page failure must fail the whole document
         raise ValueError("PDF document must be fully readable page by page") from error
     return tuple(pages)
+
+
+def _normalised_page_text(text: str) -> str:
+    """Collapse the layout whitespace of one page without touching its words.
+
+    A filing page spends a large share of its bytes on column padding and indentation.
+    The quality gate counts words, not characters, so removing that padding keeps every
+    word of the page and frees the room a dense page needs inside the Memory entry budget.
+    A page without any word stays empty.
+    """
+
+    lines = [_INLINE_SPACE.sub(" ", line).strip() for line in text.splitlines()]
+    normalised = "\n".join(lines)
+    return normalised if normalised.strip() else ""
 
 
 def _bounded_page_text(text: str, budget: int) -> str:
@@ -358,6 +376,7 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
             return ()
         index = _PageIndex.from_hits(hits)
     ranking = index.rank(
+        query,
         _weighted_terms(_content_terms(query)),
         _metric_cue(query),
         _section_cues(query),
@@ -397,65 +416,34 @@ def _index_for(listing: MemoryEntriesPage) -> _PageIndex:
     return index
 
 
-class _PageIndex:
-    """Rank every stored page of one scope with a fixed, offline lexical model."""
+class _PageModel:
+    """Rank the stored pages of one document with a fixed, offline lexical model."""
 
-    def __init__(self, listing: MemoryEntriesPage) -> None:
-        self.identifiers: list[str] = []
-        self._citations: dict[str, MemoryCitation] = {}
-        texts: list[str] = []
-        for record in listing.entries:
-            identifier = str(record.citation.entry_id)
-            if identifier in self._citations:
-                continue
-            self.identifiers.append(identifier)
-            self._citations[identifier] = record.citation
-            texts.append(record.entry.text)
-        self._build(texts)
-
-    @classmethod
-    def from_hits(cls, hits: Sequence[MemoryHit]) -> _PageIndex:
-        index = cls.__new__(cls)
-        index.identifiers = []
-        index._citations = {}
-        texts = []
-        for hit in hits:
-            identifier = str(hit.entry_id)
-            if identifier in index._citations:
-                continue
-            index.identifiers.append(identifier)
-            index._citations[identifier] = _citation_of(hit)
-            texts.append(hit.text)
-        index._build(texts)
-        return index
-
-    def _build(self, texts: Sequence[str]) -> None:
-        bodies_text = _page_bodies(texts)
-        bodies = [_counts(_terms(text)) for text in bodies_text]
-        headings = [_counts(_terms(_heading(text))) for text in texts]
-        sequences = [_terms(text) for text in bodies_text]
-        windows = [_windows(sequence) for sequence in sequences]
-        self.counts = bodies
-        self.headings = headings
-        self.lengths = [max(sum(counter.values()), _LENGTH_FLOOR) for counter in bodies]
-        self.heading_lengths = [sum(counter.values()) for counter in headings]
-        self.windows = windows
-        self.window_lengths = [[max(sum(block.values()), 20) for block in blocks] for blocks in windows]
+    def __init__(self, bodies: Sequence[str]) -> None:
+        self.counts = [_counts(_terms(text)) for text in bodies]
+        self.headings = [_counts(_terms(_heading(text))) for text in bodies]
+        sequences = [_terms(text) for text in bodies]
+        self.windows = [_windows(sequence) for sequence in sequences]
+        self.lengths = [max(sum(counter.values()), _LENGTH_FLOOR) for counter in self.counts]
+        self.heading_lengths = [sum(counter.values()) for counter in self.headings]
+        self.window_lengths = [[max(sum(block.values()), 20) for block in blocks] for blocks in self.windows]
         self.average = sum(self.lengths) / max(1, len(self.lengths))
         self.heading_average = sum(self.heading_lengths) / max(1, len(self.heading_lengths))
         self.window_average = sum(
             sum(lengths) for lengths in self.window_lengths
         ) / max(1, sum(len(lengths) for lengths in self.window_lengths))
         self.total = len(self.counts)
-        self.statements = [1.0 if _statement_page(text) else 0.0 for text in texts]
-        self.sections = [_section_page(text) for text in texts]
+        self.statements = [1.0 if _statement_page(text) else 0.0 for text in bodies]
+        self.sections = [_section_page(text) for text in bodies]
         self.document_frequency: dict[str, int] = {}
-        for counter in bodies:
+        for counter in self.counts:
             for term in counter:
                 self.document_frequency[term] = self.document_frequency.get(term, 0) + 1
 
-    def citations(self, indices: Sequence[int]) -> tuple[MemoryCitation, ...]:
-        return tuple(self._citations[self.identifiers[index]] for index in indices)
+    def best(self, weights: dict[str, float]) -> float:
+        """Strongest word match this document offers, with no filing-structure prior."""
+
+        return max((self._page_score(index, weights) for index in range(self.total)), default=0.0)
 
     def rank(
         self,
@@ -463,30 +451,38 @@ class _PageIndex:
         cue: float,
         sections: frozenset[str] = frozenset(),
     ) -> list[int]:
-        scores: list[tuple[float, int]] = []
-        for index, counter in enumerate(self.counts):
-            body = self._score(counter, self.lengths[index], self.average, weights)
-            heading = self._score(
-                self.headings[index],
-                self.heading_lengths[index],
-                self.heading_average,
-                weights,
-            )
-            window = 0.0
-            for block, block_length in zip(self.windows[index], self.window_lengths[index]):
-                candidate = self._score(block, block_length, self.window_average, weights)
-                if candidate > window:
-                    window = candidate
-            score = body + _HEADING_WEIGHT * heading + _WINDOW_WEIGHT * window
-            if self.statements[index] and cue:
-                score += _STATEMENT_WEIGHT
-            for tag in sections & self.sections[index]:
-                score += _SECTION_WEIGHTS[tag]
-            if score <= 0:
-                continue
-            scores.append((score, index))
+        scores = [
+            (self._page_score(index, weights, cue, sections), index) for index in range(self.total)
+        ]
+        scores = [item for item in scores if item[0] > 0]
         scores.sort(key=lambda item: (-item[0], item[1]))
         return [index for _score, index in scores]
+
+    def _page_score(
+        self,
+        index: int,
+        weights: dict[str, float],
+        cue: float = 0.0,
+        sections: frozenset[str] = frozenset(),
+    ) -> float:
+        body = self._score(self.counts[index], self.lengths[index], self.average, weights)
+        heading = self._score(
+            self.headings[index],
+            self.heading_lengths[index],
+            self.heading_average,
+            weights,
+        )
+        window = 0.0
+        for block, block_length in zip(self.windows[index], self.window_lengths[index]):
+            candidate = self._score(block, block_length, self.window_average, weights)
+            if candidate > window:
+                window = candidate
+        score = body + _HEADING_WEIGHT * heading + _WINDOW_WEIGHT * window
+        if self.statements[index] and cue:
+            score += _STATEMENT_WEIGHT
+        for tag in sections & self.sections[index]:
+            score += _SECTION_WEIGHTS[tag]
+        return score
 
     def _score(self, counter: dict[str, int], length: int, average: float, weights: dict[str, float]) -> float:
         score = 0.0
@@ -501,6 +497,98 @@ class _PageIndex:
             saturation = frequency + _BM25_K1 * (1 - _BM25_B + _BM25_B * length / average)
             score += weight * idf * frequency * (_BM25_K1 + 1) / saturation
         return score
+
+
+class _PageIndex:
+    """Rank stored pages after deciding which stored document the question is about.
+
+    One Memory can hold several filings at once, and a question is answered inside exactly one
+    of them. Ranking all pages as one pool lets a large filing crowd the answer pages of a
+    smaller one out of the result, so the scope is narrowed to one document first.
+    """
+
+    def __init__(self, listing: MemoryEntriesPage) -> None:
+        self.identifiers: list[str] = []
+        self._citations: dict[str, MemoryCitation] = {}
+        self._groups: dict[str, list[int]] = {}
+        self._names: dict[str, str] = {}
+        self._models: dict[str, _PageModel] = {}
+        bodies: list[str] = []
+        seen: set[tuple[str, int]] = set()
+        for record in listing.entries:
+            identifier = str(record.citation.entry_id)
+            if identifier in self._citations:
+                continue
+            document, page = _source_identity(record.entry.sources)
+            name = _document_of(record.entry.text)
+            if not document:
+                document = name
+            if page is not None:
+                if (document, page) in seen:
+                    continue
+                seen.add((document, page))
+            self.identifiers.append(identifier)
+            self._citations[identifier] = record.citation
+            self._groups.setdefault(document, []).append(len(self.identifiers) - 1)
+            self._names.setdefault(document, name)
+            bodies.append(_body_of(record.entry.text, name))
+        self._build(bodies)
+
+    @classmethod
+    def from_hits(cls, hits: Sequence[MemoryHit]) -> _PageIndex:
+        index = cls.__new__(cls)
+        index.identifiers = []
+        index._citations = {}
+        index._groups = {}
+        index._names = {}
+        index._models = {}
+        bodies: list[str] = []
+        for hit in hits:
+            identifier = str(hit.entry_id)
+            if identifier in index._citations:
+                continue
+            name = _document_of(hit.text)
+            index.identifiers.append(identifier)
+            index._citations[identifier] = _citation_of(hit)
+            index._groups.setdefault(name, []).append(len(index.identifiers) - 1)
+            index._names.setdefault(name, name)
+            bodies.append(_body_of(hit.text, name))
+        index._build(bodies)
+        return index
+
+    def _build(self, bodies: Sequence[str]) -> None:
+        self._models = {
+            document: _PageModel([bodies[position] for position in positions])
+            for document, positions in self._groups.items()
+        }
+
+    def citations(self, indices: Sequence[int]) -> tuple[MemoryCitation, ...]:
+        return tuple(self._citations[self.identifiers[index]] for index in indices)
+
+    def route(self, question: str, weights: dict[str, float]) -> str:
+        """Pick the document the question belongs to."""
+
+        best_document = ""
+        best_score = -1.0
+        for document, model in self._models.items():
+            identity = _identity_match(question, self._names.get(document, document))
+            score = model.best(weights) * (1.0 + _IDENTITY_BONUS * identity)
+            if score > best_score:
+                best_document, best_score = document, score
+        return best_document
+
+    def rank(
+        self,
+        question: str,
+        weights: dict[str, float],
+        cue: float,
+        sections: frozenset[str] = frozenset(),
+    ) -> list[int]:
+        if not self._models:
+            return []
+        document = self.route(question, weights)
+        positions = self._groups[document]
+        return [positions[offset] for offset in self._models[document].rank(weights, cue, sections)]
 
 
 def _citation_of(hit: MemoryHit) -> MemoryCitation:
@@ -544,22 +632,81 @@ def _counts(terms: Sequence[str]) -> dict[str, int]:
     return counter
 
 
-def _page_bodies(texts: Sequence[str]) -> list[str]:
-    """Drop the document-identity line that the text projection repeats above every page.
+def _document_of(text: str) -> str:
+    """The document id the standard text projection prints above every page."""
 
-    The identity line carries the document name and its fiscal year, so keeping it would make
-    those terms present on every page and flatten their statistical weight to nothing.
+    head, _separator, _rest = text.partition("\n")
+    return head
+
+
+def _source_identity(sources: Sequence[SourceRef]) -> tuple[str, int | None]:
+    """Read the document id and the physical page number out of a page source identity.
+
+    The source identity is built from the document id, the digest of the file and the page
+    number, so it states which filing a stored page belongs to without reading the entry text.
     """
 
-    heads = [text.split("\n", 1)[0] for text in texts]
-    occurrences = _counts(heads)
-    bodies: list[str] = []
-    for text, head in zip(texts, heads):
-        if "\n" in text and occurrences.get(head, 0) > 1:
-            bodies.append(text.split("\n", 1)[1])
-        else:
-            bodies.append(text)
-    return bodies
+    for reference in sources:
+        if reference.source_type != PDF_PAGE_SOURCE_NAME:
+            continue
+        parts = reference.source_id.split(":")
+        if len(parts) != 4:
+            continue
+        document = unquote(parts[1])
+        try:
+            page = int(parts[3])
+        except ValueError:
+            continue
+        return document, page
+    return "", None
+
+
+def _body_of(text: str, document: str) -> str:
+    """The page text without the document identity line the text projection prints on top."""
+
+    if document and text.startswith(document):
+        _prefix, separator, rest = text.partition("\n")
+        if separator:
+            return rest
+    return text
+
+
+def _compact(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    position = 0
+    for letter in needle:
+        position = haystack.find(letter, position)
+        if position < 0:
+            return False
+        position += 1
+    return True
+
+
+def _identity_match(question: str, document_id: str) -> float:
+    """How strongly the question names the document it is about.
+
+    A filing is named in full ("American Express"), by its ticker ("AMEX") or by a short brand
+    ("3M"). Each form is recognised from the document id itself, so nothing is listed by hand.
+    """
+
+    lead = _WORD.match(document_id)
+    stem = _compact(lead.group()) if lead is not None else _compact(document_id.split("_", 1)[0])
+    if len(stem) < 2:
+        return 0.0
+    text = _compact(question)
+    if any(word.casefold() == stem for word in _WORD.findall(question)):
+        return 1.0
+    if len(stem) >= 4 and stem in text:
+        return 1.0
+    for word in _LETTER_WORD.findall(question):
+        if word.isupper() and 2 <= len(word) <= 6 and _is_subsequence(word.casefold(), stem):
+            return 0.8
+    if len(stem) >= 6 and stem[:5] in text:
+        return 0.5
+    return 0.0
 
 
 def _windows(terms: Sequence[str]) -> list[dict[str, int]]:
@@ -572,12 +719,11 @@ def _windows(terms: Sequence[str]) -> list[dict[str, int]]:
 
 
 def _heading(text: str) -> str:
-    # The first projection line carries the document identity, which is identical on every page
-    # of one document and therefore useless as a title signal.
-    body = text.split("\n", 1)[1] if "\n" in text else text
+    """The title of one page, taken from the words it prints first."""
+
     lines: list[str] = []
     collected = 0
-    for line in body.splitlines():
+    for line in text.splitlines():
         words = _terms(line)
         if not words or " ".join(_raw_terms(line)) in _TOC_LABELS:
             continue
@@ -585,15 +731,14 @@ def _heading(text: str) -> str:
         collected += len(words)
         if collected >= 12:
             break
-    return " ".join(_terms("\n".join(lines) if lines else body)[:_HEADING_TERMS])
+    return " ".join(_terms("\n".join(lines) if lines else text)[:_HEADING_TERMS])
 
 
 def _statement_page(text: str) -> float:
     # Only the page title decides this: a note or an auditor report that merely mentions the
     # statements further down must not be promoted over the statement pages themselves.
-    body = text.split("\n", 1)[1] if "\n" in text else text
     head: list[str] = []
-    for line in body.splitlines():
+    for line in text.splitlines():
         words = _raw_terms(line)
         if not words or " ".join(words) in _TOC_LABELS:
             continue
@@ -612,8 +757,7 @@ def _metric_cue(question: str) -> float:
 def _section_page(text: str) -> frozenset[str]:
     """Flag the sections a page opens, judged from the headings the page itself prints."""
 
-    body = text.split("\n", 1)[1] if "\n" in text else text
-    lines = [" ".join(_raw_terms(line)) for line in body.splitlines()[:60]]
+    lines = [" ".join(_raw_terms(line)) for line in text.splitlines()[:60]]
     compact = [line.replace(" ", "") for line in lines]
     tags: set[str] = set()
     if any("item1a" in line for line in compact):
