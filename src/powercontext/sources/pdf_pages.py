@@ -47,6 +47,11 @@ _WORD = re.compile(r"[A-Za-z0-9]+")
 _LETTER_WORD = re.compile(r"[A-Za-z]+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.?!])\s+")
 _INLINE_SPACE = re.compile(r"[^\S\n]+")
+_WORD_CHARACTER = re.compile(r"[A-Za-z0-9]")
+_COMPACT = re.compile(r"[^a-z0-9]+")
+_YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
+_SHORT_YEAR = re.compile(r"(?i)(?:fy|fiscal\s+year|year)\s*'?(\d{2})(?!\d)")
+_FORM_MARKERS = re.compile(r"10K|10Q|8K|EARNINGS|Q[1-4]", re.IGNORECASE)
 
 # Ranking constants of the offline page model. They are fixed: the retriever never trains,
 # never calls a model and never sees the evaluation labels.
@@ -63,6 +68,8 @@ _RISK_SECTION_WEIGHT = 8.0
 _SEGMENT_SECTION_WEIGHT = 6.0
 _OVERVIEW_SECTION_WEIGHT = 8.0
 _IDENTITY_BONUS = 10.0
+_PERIOD_BONUS = 10.0
+_FORM_BONUS = 1.0
 _INDEX_CACHE_SIZE = 1
 
 # Filings keep a fixed table of contents, so a section heading identifies what a page is for even
@@ -77,7 +84,6 @@ _SEGMENT_SECTION_TITLES = (
     "segment reporting",
 )
 _SEGMENT_CUES = ("category", "categories", "segment", "segments", "product line", "service categor")
-
 # A margin question about a bank or an insurer is answered by the business overview that explains
 # why the metric does not apply, not by an income statement.
 _OVERVIEW_SECTION_TITLES = ("item 1 business", "item 1 business overview", "item 1 general")
@@ -91,6 +97,12 @@ _SUMMARY_SECTION_TITLES = (
     "summary of selected financial data",
 )
 _SUMMARY_CUES = ("how much", "changed", "change in", "compared", "versus", "increase", "decrease")
+
+# A section title is laid out in a narrow column, so the extraction often breaks one word of it
+# in two ("Business Segment Dat a"). The titles are therefore matched without the spaces.
+_SEGMENT_SECTION_TITLES_COMPACT = tuple(title.replace(" ", "") for title in _SEGMENT_SECTION_TITLES)
+_OVERVIEW_SECTION_TITLES_COMPACT = tuple(title.replace(" ", "") for title in _OVERVIEW_SECTION_TITLES)
+_SUMMARY_SECTION_TITLES_COMPACT = tuple(title.replace(" ", "") for title in _SUMMARY_SECTION_TITLES)
 
 _SECTION_WEIGHTS = {
     "risk": _RISK_SECTION_WEIGHT,
@@ -167,13 +179,19 @@ _STATEMENT_SIGNATURES = (
     "consolidated statements of earnings",
     "consolidated statement of earnings",
     "consolidated balance sheet",
+    "consolidated balance sheets",
     "consolidated statements of cash flows",
     "consolidated statement of cash flows",
     "consolidated statements of comprehensive income",
     "consolidated statements of changes in equity",
     "consolidated statements of stockholders",
     "consolidated statements of shareholders",
+    "consolidated statements of financial position",
 )
+
+# A filing title is laid out in a narrow column, so the extraction often breaks one word of it
+# in two ("Balance Shee t"). The signature is therefore matched without the spaces.
+_STATEMENT_SIGNATURES_COMPACT = tuple(signature.replace(" ", "") for signature in _STATEMENT_SIGNATURES)
 
 # Cues that the answer is a figure rather than a narrative.
 _METRIC_CUES = (
@@ -205,6 +223,12 @@ _METRIC_CUES = (
     "ppne",
     "ppe",
 )
+
+# A question may write a metric as one word ("cashflow") while the cue and the filing write it
+# as two ("cash flow"). A cue made of several words is therefore also matched without the
+# spaces and the punctuation of the question.
+_METRIC_CUES_MULTI = tuple(cue for cue in _METRIC_CUES if len(cue.split()) > 1)
+_METRIC_CUES_MULTI_COMPACT = tuple(_COMPACT.sub("", cue) for cue in _METRIC_CUES_MULTI)
 
 _INDEX_CACHE: OrderedDict[tuple[str, int, int], _PageIndex] = OrderedDict()
 
@@ -280,17 +304,22 @@ def parse_pdf_document(value: PDFDocumentInput, /) -> tuple[PDFPageInput, ...]:
 
 
 def _normalised_page_text(text: str) -> str:
-    """Collapse the layout whitespace of one page without touching its words.
+    """Collapse the layout whitespace of one page without touching its words or its punctuation.
 
-    A filing page spends a large share of its bytes on column padding and indentation.
-    The quality gate counts words, not characters, so removing that padding keeps every
-    word of the page and frees the room a dense page needs inside the Memory entry budget.
-    A page without any word stays empty.
+    A filing page spends a large share of its bytes on column padding, indentation and blank
+    lines. The quality gate counts words with ``[a-z]+|\\d+``, so neither the padding nor a
+    blank line carries a word of its own: dropping them keeps every word of the page and
+    frees the room a dense page needs inside the Memory entry budget. A page without any
+    word stays empty.
     """
 
-    lines = [_INLINE_SPACE.sub(" ", line).strip() for line in text.splitlines()]
+    lines = []
+    for line in text.splitlines():
+        trimmed = _INLINE_SPACE.sub(" ", line).strip()
+        if trimmed:
+            lines.append(trimmed)
     normalised = "\n".join(lines)
-    return normalised if normalised.strip() else ""
+    return normalised if _WORD_CHARACTER.search(normalised) else ""
 
 
 def _bounded_page_text(text: str, budget: int) -> str:
@@ -520,9 +549,8 @@ class _PageIndex:
             if identifier in self._citations:
                 continue
             document, page = _source_identity(record.entry.sources)
-            name = _document_of(record.entry.text)
             if not document:
-                document = name
+                document = _document_of(record.entry.text)
             if page is not None:
                 if (document, page) in seen:
                     continue
@@ -530,8 +558,8 @@ class _PageIndex:
             self.identifiers.append(identifier)
             self._citations[identifier] = record.citation
             self._groups.setdefault(document, []).append(len(self.identifiers) - 1)
-            self._names.setdefault(document, name)
-            bodies.append(_body_of(record.entry.text, name))
+            self._names.setdefault(document, document)
+            bodies.append(_body_of(record.entry.text, document))
         self._build(bodies)
 
     @classmethod
@@ -566,16 +594,25 @@ class _PageIndex:
         return tuple(self._citations[self.identifiers[index]] for index in indices)
 
     def route(self, question: str, weights: dict[str, float]) -> str:
-        """Pick the document the question belongs to."""
+        """Pick the document the question belongs to.
 
-        best_document = ""
-        best_score = -1.0
+        A question names the company it asks about, so the filings of that company are the
+        only candidates. Within them the period and the kind of filing tell the filings
+        apart, because one company files the same form again for every year.
+        """
+
+        scored: list[tuple[float, float, str]] = []
         for document, model in self._models.items():
-            identity = _identity_match(question, self._names.get(document, document))
-            score = model.best(weights) * (1.0 + _IDENTITY_BONUS * identity)
-            if score > best_score:
-                best_document, best_score = document, score
-        return best_document
+            name = self._names.get(document, document)
+            identity = _identity_match(question, name)
+            period = _period_match(question, name)
+            form = _form_match(question, name)
+            score = model.best(weights) * (1.0 + _IDENTITY_BONUS * identity + _PERIOD_BONUS * period)
+            score *= 1.0 + _FORM_BONUS * form
+            scored.append((identity, score, document))
+        named = [item for item in scored if item[0] >= 1.0]
+        pool = named if named else scored
+        return max(pool, key=lambda item: item[1])[2]
 
     def rank(
         self,
@@ -662,12 +699,14 @@ def _source_identity(sources: Sequence[SourceRef]) -> tuple[str, int | None]:
 
 
 def _body_of(text: str, document: str) -> str:
-    """The page text without the document identity line the text projection prints on top."""
+    """The page text without the document identity line the text projection prints on top.
 
-    if document and text.startswith(document):
-        _prefix, separator, rest = text.partition("\n")
-        if separator:
-            return rest
+    The identity line is only removed when the text really starts with the document id, so a
+    page whose first line is part of its own wording keeps that line.
+    """
+
+    if document and text.startswith(f"{document}\n"):
+        return text[len(document) + 1 :]
     return text
 
 
@@ -709,6 +748,47 @@ def _identity_match(question: str, document_id: str) -> float:
     return 0.0
 
 
+def _period_match(question: str, document_id: str) -> float:
+    """Tell whether the question names the period the filing covers.
+
+    One company files the same form again for every year, so the name alone cannot tell two
+    filings of that company apart. The year a filing belongs to is part of its identity, and
+    a question that names a year ("as of FY2022", "in FY22") says which filing it is about.
+    """
+
+    period = _YEAR.search(document_id)
+    if period is None:
+        return 0.0
+    return 1.0 if period.group(1) in _question_years(question) else 0.0
+
+
+def _question_years(question: str) -> set[str]:
+    """The years a question names, written in full or in the short form of a fiscal year."""
+
+    years = {found.group(1) for found in _YEAR.finditer(question)}
+    for found in _SHORT_YEAR.finditer(question):
+        digits = found.group(1)
+        years.add("20" + digits if int(digits) < 50 else "19" + digits)
+    return years
+
+
+def _form_match(question: str, document_id: str) -> float:
+    """Tell whether the question names the kind of document the filing is.
+
+    A company files an annual report, a quarterly report and an earnings release, and the
+    three answer different questions. The kind of filing is part of its identity, so a
+    question that names the form ("the 10-K", "the earnings release") says which one it is
+    about.
+    """
+
+    text = _compact(question)
+    for marker in _FORM_MARKERS.findall(document_id):
+        key = _compact(marker)
+        if len(key) >= 2 and key in text:
+            return 1.0
+    return 0.0
+
+
 def _windows(terms: Sequence[str]) -> list[dict[str, int]]:
     blocks: list[dict[str, int]] = []
     for start in range(0, len(terms), _WINDOW_TOKENS):
@@ -745,13 +825,23 @@ def _statement_page(text: str) -> float:
         head.extend(words)
         if len(head) >= _STATEMENT_TITLE_TERMS:
             break
-    joined = " ".join(head)
-    return 1.0 if any(signature in joined for signature in _STATEMENT_SIGNATURES) else 0.0
+    joined = "".join(head)
+    return 1.0 if any(signature in joined for signature in _STATEMENT_SIGNATURES_COMPACT) else 0.0
 
 
 def _metric_cue(question: str) -> float:
+    """Tell whether the question asks for a figure, so that a statement page can be preferred.
+
+    A metric that is written as several words is also matched without the spaces, because a
+    question may join it into one word ("cashflow") while the filing keeps the two words
+    ("cash flows").
+    """
+
     lowered = question.casefold()
-    return 1.0 if any(cue in lowered for cue in _METRIC_CUES) else 0.0
+    if any(cue in lowered for cue in _METRIC_CUES):
+        return 1.0
+    compact = _COMPACT.sub("", lowered)
+    return 1.0 if any(cue in compact for cue in _METRIC_CUES_MULTI_COMPACT) else 0.0
 
 
 def _section_page(text: str) -> frozenset[str]:
@@ -762,11 +852,11 @@ def _section_page(text: str) -> frozenset[str]:
     tags: set[str] = set()
     if any("item1a" in line for line in compact):
         tags.add("risk")
-    if any(title in line for line in lines for title in _SEGMENT_SECTION_TITLES):
+    if any(title in line for line in compact for title in _SEGMENT_SECTION_TITLES_COMPACT):
         tags.add("segment")
-    if any(title.replace(" ", "") in line for line in compact for title in _OVERVIEW_SECTION_TITLES):
+    if any(title in line for line in compact for title in _OVERVIEW_SECTION_TITLES_COMPACT):
         tags.add("overview")
-    if any(title in line for line in lines for title in _SUMMARY_SECTION_TITLES):
+    if any(title in line for line in compact for title in _SUMMARY_SECTION_TITLES_COMPACT):
         tags.add("summary")
     return frozenset(tags)
 
