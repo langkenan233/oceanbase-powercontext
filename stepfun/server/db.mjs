@@ -142,10 +142,20 @@ export class Store {
     const col = await this.collection();
     const started = Date.now();
     const batch = Number(process.env.WRITE_BATCH || 32);
+
+    // Importing a document replaces it: drop whatever the previous version of
+    // that source left behind, including chunks it no longer has.
+    const docIds = [...new Set(rows.map((r) => r.metadata?.docId).filter(Boolean))];
+    for (const docId of docIds) {
+      await col.delete({ where: { docId } });
+    }
+
     let written = 0;
     for (let i = 0; i < rows.length; i += batch) {
       const slice = rows.slice(i, i + batch);
-      await col.add({
+      // upsert, not add: ids are content hashes, so importing the same file
+      // again has to replace its rows rather than collide with them.
+      await col.upsert({
         ids: slice.map((r) => r.id),
         documents: slice.map((r) => r.document),
         embeddings: slice.map((r) => r.embedding),

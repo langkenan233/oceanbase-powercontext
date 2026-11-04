@@ -230,7 +230,9 @@ async function importDocuments(docs) {
   try {
     const rows = [];
     for (const doc of docs) {
-      const docId = hash(`${doc.source}|${doc.text}`);
+      // Keyed on the source name so importing an edited file replaces its
+      // previous chunks instead of leaving the old version behind.
+      const docId = hash(doc.source);
       const parts = chunkText(doc.text);
       parts.forEach((part, i) => {
         rows.push({
