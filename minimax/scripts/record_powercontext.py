@@ -64,7 +64,7 @@ def main() -> int:
             {"name": "target_tests_before", "result": "6 failed, exit code 1"},
             {"name": "target_tests_after", "result": "12 passed, exit code 0"},
         ],
-        context_digest="e5fabcf1dfbc6931",
+        context_digest="207b405b4f8f5227",
     )
     lines.append("## write")
     lines.append(f"POST {settings.powercontext_url}/v1/memory/remember")

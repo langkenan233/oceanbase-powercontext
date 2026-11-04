@@ -1,14 +1,14 @@
 # specification change check
-# timestamp: 2026-11-04T08:12:44+00:00
+# timestamp: 2026-11-04T08:35:35+00:00
 
 ## before the specification change
 revision: 1
 contains_marker: False
-digest: e5fabcf1dfbc6931
+digest: 207b405b4f8f5227
 
 ## after the specification change
 revision: 2
 contains_marker: True
-digest: dc0ec37958ae791a
+digest: 0bd9d5ed07b3ac14
 
 # result: passed

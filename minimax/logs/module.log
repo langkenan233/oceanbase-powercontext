@@ -1,5 +1,5 @@
 # suite: module
-# timestamp: 2026-11-04T08:13:15+00:00
+# timestamp: 2026-11-04T08:38:09+00:00
 # command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m pytest minimax/tests -v
 # exit_code: 0
 # code_version:
@@ -12,28 +12,31 @@ cachedir: .pytest_cache
 rootdir: D:\杂项工作空间\OceanBase比赛\PowerContext
 configfile: pyproject.toml
 plugins: anyio-4.16.0, platformdirs-4.14.3
-collecting ... collected 21 items
+collecting ... collected 24 items
 
 minimax/tests/test_sddctx.py::test_load_settings_reads_the_environment_file PASSED [  4%]
-minimax/tests/test_sddctx.py::test_load_settings_prefers_the_process_environment PASSED [  9%]
-minimax/tests/test_sddctx.py::test_read_revision_returns_the_declared_revision PASSED [ 14%]
-minimax/tests/test_sddctx.py::test_read_revision_defaults_to_one PASSED  [ 19%]
-minimax/tests/test_sddctx.py::test_read_revision_ignores_a_revision_inside_the_body PASSED [ 23%]
-minimax/tests/test_sddctx.py::test_import_workload_counts_every_kind PASSED [ 28%]
-minimax/tests/test_sddctx.py::test_import_workload_keeps_the_specification_revision PASSED [ 33%]
-minimax/tests/test_sddctx.py::test_context_digest_changes_with_the_material_revision PASSED [ 38%]
-minimax/tests/test_sddctx.py::test_context_digest_is_stable_for_the_same_material PASSED [ 42%]
-minimax/tests/test_sddctx.py::test_context_render_names_the_specification_and_its_source PASSED [ 47%]
-minimax/tests/test_sddctx.py::test_context_render_lists_the_recorded_progress PASSED [ 52%]
-minimax/tests/test_sddctx.py::test_context_builder_ranks_the_material_by_keyword_hits PASSED [ 57%]
-minimax/tests/test_sddctx.py::test_task_state_round_trips_through_its_text PASSED [ 61%]
-minimax/tests/test_sddctx.py::test_task_state_text_is_valid_json PASSED  [ 66%]
-minimax/tests/test_sddctx.py::test_state_store_rejects_a_state_that_is_too_long PASSED [ 71%]
-minimax/tests/test_sddctx.py::test_touched_files_reads_the_git_header PASSED [ 76%]
-minimax/tests/test_sddctx.py::test_touched_files_falls_back_to_the_file_header PASSED [ 80%]
-minimax/tests/test_sddctx.py::test_apply_patch_reports_a_missing_patch_file PASSED [ 85%]
-minimax/tests/test_sddctx.py::test_minimax_client_reports_a_missing_key PASSED [ 90%]
+minimax/tests/test_sddctx.py::test_load_settings_prefers_the_process_environment PASSED [  8%]
+minimax/tests/test_sddctx.py::test_read_revision_returns_the_declared_revision PASSED [ 12%]
+minimax/tests/test_sddctx.py::test_read_revision_defaults_to_one PASSED  [ 16%]
+minimax/tests/test_sddctx.py::test_read_revision_ignores_a_revision_inside_the_body PASSED [ 20%]
+minimax/tests/test_sddctx.py::test_import_workload_counts_every_kind PASSED [ 25%]
+minimax/tests/test_sddctx.py::test_import_workload_keeps_the_specification_revision PASSED [ 29%]
+minimax/tests/test_sddctx.py::test_context_digest_changes_with_the_material_revision PASSED [ 33%]
+minimax/tests/test_sddctx.py::test_context_digest_is_stable_for_the_same_material PASSED [ 37%]
+minimax/tests/test_sddctx.py::test_context_render_names_the_specification_and_its_source PASSED [ 41%]
+minimax/tests/test_sddctx.py::test_context_render_lists_the_recorded_progress PASSED [ 45%]
+minimax/tests/test_sddctx.py::test_context_builder_ranks_the_material_by_keyword_hits PASSED [ 50%]
+minimax/tests/test_sddctx.py::test_task_state_round_trips_through_its_text PASSED [ 54%]
+minimax/tests/test_sddctx.py::test_task_state_text_is_valid_json PASSED  [ 58%]
+minimax/tests/test_sddctx.py::test_state_store_rejects_a_state_that_is_too_long PASSED [ 62%]
+minimax/tests/test_sddctx.py::test_verification_entry_keeps_a_json_object PASSED [ 66%]
+minimax/tests/test_sddctx.py::test_verification_entry_wraps_plain_text PASSED [ 70%]
+minimax/tests/test_sddctx.py::test_verification_entry_wraps_a_json_scalar PASSED [ 75%]
+minimax/tests/test_sddctx.py::test_touched_files_reads_the_git_header PASSED [ 79%]
+minimax/tests/test_sddctx.py::test_touched_files_falls_back_to_the_file_header PASSED [ 83%]
+minimax/tests/test_sddctx.py::test_apply_patch_reports_a_missing_patch_file PASSED [ 87%]
+minimax/tests/test_sddctx.py::test_minimax_client_reports_a_missing_key PASSED [ 91%]
 minimax/tests/test_sddctx.py::test_seekdb_stores_and_returns_the_material PASSED [ 95%]
 minimax/tests/test_sddctx.py::test_powercontext_stores_and_returns_the_task_state PASSED [100%]
 
-============================= 21 passed in 0.88s ==============================
+============================= 24 passed in 1.33s ==============================

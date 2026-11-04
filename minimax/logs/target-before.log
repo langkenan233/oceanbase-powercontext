@@ -1,5 +1,5 @@
 # suite: target-before
-# timestamp: 2026-11-04T08:12:39+00:00
+# timestamp: 2026-11-04T08:34:32+00:00
 # command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m pytest minimax/workload/app/tests/test_reader_range_clamp.py -v
 # exit_code: 1
 # code_version:
@@ -83,7 +83,7 @@ E        +  where [] = RangeResult(path='<memory>', start_line=1, end_line=1, co
 minimax\workload\app\tests\test_reader_range_clamp.py:111: AssertionError
 ______________________ test_read_file_reports_the_clamp _______________________
 
-tmp_path = WindowsPath('C:/Users/intel/AppData/Local/Temp/pytest-of-intel/pytest-24/test_read_file_reports_the_cla0')
+tmp_path = WindowsPath('C:/Users/intel/AppData/Local/Temp/pytest-of-intel/pytest-33/test_read_file_reports_the_cla0')
 
     def test_read_file_reports_the_clamp(tmp_path: Path) -> None:
         target = tmp_path / "sample.txt"
@@ -94,7 +94,7 @@ tmp_path = WindowsPath('C:/Users/intel/AppData/Local/Temp/pytest-of-intel/pytest
         assert result.end_line == 4
 >       assert CLAMPED in result.limitations
 E       AssertionError: assert 'source_range_clamped' in []
-E        +  where [] = RangeResult(path='C:\\Users\\intel\\AppData\\Local\\Temp\\pytest-of-intel\\pytest-24\\test_read_file_reports_the_cla0\\sample.txt', start_line=1, end_line=4, content='alpha\nbeta\ngamma\ndelta\n', limitations=[], truncated=False, snippet_sha256='927c9bb49935d22cfef1df0fd954eb8011420a9b1ec2350d65647accf201bbe9').limitations
+E        +  where [] = RangeResult(path='C:\\Users\\intel\\AppData\\Local\\Temp\\pytest-of-intel\\pytest-33\\test_read_file_reports_the_cla0\\sample.txt', start_line=1, end_line=4, content='alpha\nbeta\ngamma\ndelta\n', limitations=[], truncated=False, snippet_sha256='927c9bb49935d22cfef1df0fd954eb8011420a9b1ec2350d65647accf201bbe9').limitations
 
 minimax\workload\app\tests\test_reader_range_clamp.py:121: AssertionError
 =========================== short test summary info ===========================

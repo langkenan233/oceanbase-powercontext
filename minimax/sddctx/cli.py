@@ -68,6 +68,23 @@ def _print(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def parse_verification(item: str) -> dict[str, Any]:
+    """Return one verification record.
+
+    The value is normally a JSON object, for example
+    ``{"name": "target_tests_before", "result": "6 failed"}``. Plain text is
+    accepted as well and is stored as the ``result`` of the record.
+    """
+
+    try:
+        parsed = json.loads(item)
+    except json.JSONDecodeError:
+        return {"result": item}
+    if isinstance(parsed, dict):
+        return parsed
+    return {"result": parsed}
+
+
 def _load_state(settings: Any, task_id: str) -> TaskState | None:
     store = PowerContextStateStore(settings)
     if not store.ping():
@@ -119,7 +136,7 @@ def command_state_save(arguments: argparse.Namespace) -> int:
         objective=arguments.objective,
         completed=list(arguments.completed),
         todo=list(arguments.todo),
-        verification=[json.loads(item) for item in arguments.verification],
+        verification=[parse_verification(item) for item in arguments.verification],
         context_digest=arguments.digest,
     )
     response = store.save_state(state)
@@ -273,7 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     state_save.add_argument("--objective", default="")
     state_save.add_argument("--completed", action="append", default=[])
     state_save.add_argument("--todo", action="append", default=[])
-    state_save.add_argument("--verification", action="append", default=[])
+    state_save.add_argument(
+        "--verification",
+        action="append",
+        default=[],
+        help='Verification record, either a JSON object or plain text.',
+    )
     state_save.add_argument("--digest", default="")
     state_save.set_defaults(handler=command_state_save)
 

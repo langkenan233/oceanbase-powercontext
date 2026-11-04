@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 """Show that a specification change reaches the next context build.
 
-The script builds the context with the specification at revision 1, replaces
-the specification with revision 2, imports it again, builds the context a
-second time and writes the two results next to each other. The second context
-must carry revision 2 and the text that only revision 2 contains.
+The script builds the context with the specification at revision 1, replaces the
+specification with revision 2, imports it again, builds the context a second time
+and writes the two results next to each other. The second context must carry
+revision 2 and the text that only revision 2 contains.
+
+The demonstration starts from the state before the code change, so that both
+contexts are built from the same baseline as the context that was handed to
+MiniMax. The patch is applied again at the end, which leaves the business
+project in the delivered state.
 
 Usage:
     python minimax/scripts/verify_spec_change.py
@@ -51,6 +56,20 @@ def run_module(*arguments: str) -> tuple[int, str]:
     return completed.returncode, completed.stdout + completed.stderr
 
 
+def run_script(relative: str, *arguments: str) -> tuple[int, str]:
+    """Run one script of the module and return its exit code and output."""
+
+    completed = subprocess.run(
+        [sys.executable, str(MODULE_ROOT / relative), *arguments],
+        cwd=REPO_ROOT,
+        env=environment(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout + completed.stderr
+
+
 def build_context() -> dict[str, object]:
     """Build the development context and return the parsed result."""
 
@@ -82,6 +101,10 @@ def main() -> int:
     ]
 
     shutil_copy(SPEC_V1, SPEC)
+    code, output = run_script("scripts/reset_workload.py", "--state", "before")
+    if code != 0:
+        print(output, file=sys.stderr)
+        return 1
     code, output = run_module("init", "--reset", "--env-file", "minimax/sddctx.env")
     if code != 0:
         print(output, file=sys.stderr)
@@ -116,6 +139,10 @@ def main() -> int:
     )
 
     shutil_copy(SPEC_V1, SPEC)
+    code, output = run_module("apply", "--patch", "minimax/logs/minimax_patch.diff")
+    if code != 0:
+        print(output, file=sys.stderr)
+        return 1
     code, output = run_module("init", "--reset", "--env-file", "minimax/sddctx.env")
     if code != 0:
         print(output, file=sys.stderr)

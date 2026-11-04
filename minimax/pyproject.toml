@@ -2,14 +2,15 @@
 #
 # The rules match the ones the PowerContext project uses. Two additions: the
 # test directories of the module and of the business project are allowed to
-# use assert and to call subprocess, and the snapshot directory is excluded
-# because it holds the code as it was before the change.
+# use assert and to call subprocess, and two directories are excluded. The
+# snapshot directory holds the code as it was before the change, the vendor
+# directory holds an unmodified copy of the upstream PowerContext source.
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
 fix = true
-extend-exclude = ["workload/snapshots"]
+extend-exclude = ["workload/snapshots", "vendor"]
 
 [tool.ruff.lint]
 select = [

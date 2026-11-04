@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from sddctx.cli import parse_verification
 from sddctx.config import Settings, load_settings
 from sddctx.context_builder import ContextBuilder, ContextPackage
 from sddctx.importer import import_workload, read_revision
@@ -253,6 +254,24 @@ def test_state_store_rejects_a_state_that_is_too_long() -> None:
 
     with pytest.raises(RuntimeError, match="8192"):
         store.save_state(state)
+
+
+def test_verification_entry_keeps_a_json_object() -> None:
+    entry = parse_verification('{"name": "target_tests_before", "result": "6 failed"}')
+
+    assert entry == {"name": "target_tests_before", "result": "6 failed"}
+
+
+def test_verification_entry_wraps_plain_text() -> None:
+    entry = parse_verification("target tests failed before the change")
+
+    assert entry == {"result": "target tests failed before the change"}
+
+
+def test_verification_entry_wraps_a_json_scalar() -> None:
+    entry = parse_verification("42")
+
+    assert entry == {"result": 42}
 
 
 # -- patch --------------------------------------------------------------------

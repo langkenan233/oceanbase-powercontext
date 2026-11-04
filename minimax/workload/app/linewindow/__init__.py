@@ -29,8 +29,8 @@ The range reader is derived from the ``GraphQuery.read`` method of
 PowerContext (``src/powercontext/builtin/code/query.py``, Apache-2.0). The
 line splitting, the byte budget and the limitation vocabulary are kept; the
 module boundary is rewritten so that the project runs on its own without the
-PowerContext package. The change applied for this task is listed in
-``minimax/docs/technical_notes.md``.
+PowerContext package. The change applied for this task is described by the
+specification ``specs/SPEC-001-read-range-clamp.md``.
 """
 
 from linewindow.indexer import Definition, find_definition, index_definitions, index_file

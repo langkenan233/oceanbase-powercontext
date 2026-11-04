@@ -57,6 +57,60 @@ revision: 1
 
 ## Code to change
 
+### app/linewindow/__init__.py (revision 1)
+source: app/linewindow/__init__.py
+
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A small library that reads a line range out of a text file.
+
+The package is the business project of this competition entry. It exists so
+that the specification driven development task has a runnable project with its
+own test suite:
+
+``linewindow.reader``
+    The range reader under change.
+``tests/test_reader.py``
+    The behaviour that must survive the change.
+``tests/test_reader_range_clamp.py``
+    The new behaviour demanded by SPEC-001.
+
+The range reader is derived from the ``GraphQuery.read`` method of
+PowerContext (``src/powercontext/builtin/code/query.py``, Apache-2.0). The
+line splitting, the byte budget and the limitation vocabulary are kept; the
+module boundary is rewritten so that the project runs on its own without the
+PowerContext package. The change applied for this task is described by the
+specification ``specs/SPEC-001-read-range-clamp.md``.
+"""
+
+from linewindow.indexer import Definition, find_definition, index_definitions, index_file
+from linewindow.reader import RangeResult, count_lines, read_file, read_range, split_lines
+
+__all__ = [
+    "Definition",
+    "RangeResult",
+    "count_lines",
+    "find_definition",
+    "index_definitions",
+    "index_file",
+    "read_file",
+    "read_range",
+    "split_lines",
+]
+
+
 ### app/linewindow/reader.py (revision 1)
 source: app/linewindow/reader.py
 
@@ -88,7 +142,6 @@ from pathlib import Path
 
 SOURCE_TRUNCATED = "source_truncated"
 SOURCE_LINE_TOO_LARGE = "source_line_too_large"
-SOURCE_RANGE_CLAMPED = "source_range_clamped"
 
 
 class RangeError(RuntimeError):
@@ -157,8 +210,7 @@ def read_range(
 
     Line numbers are 1-based. A ``start`` beyond the last line of the content
     is rejected. An ``end`` beyond the last line of the content is clamped to
-    the last line, and the clamp is reported as ``source_range_clamped`` so a
-    caller can tell a short content from a truncated request.
+    the last line.
     """
 
     lines = split_lines(content)
@@ -166,13 +218,10 @@ def read_range(
         lines = [""]
     if start > len(lines):
         raise RangeError("code_range_missing", f"line {start} is beyond the end of {path}")
+    end = min(end, len(lines))
+    selected = bytearray()
     limitations: list[str] = []
     truncated = False
-    if end > len(lines):
-        limitations.append(SOURCE_RANGE_CLAMPED)
-        truncated = True
-        end = len(lines)
-    selected = bytearray()
     last = start - 1
     for offset, line in enumerate(lines[start - 1 : end], start):
         encoded = line.encode("utf-8")
@@ -183,13 +232,12 @@ def read_range(
         selected.extend(encoded)
         last = offset
     if last < start:
-        limitations.append(SOURCE_LINE_TOO_LARGE)
         return RangeResult(
             path=path,
             start_line=start,
             end_line=last,
             content="",
-            limitations=limitations,
+            limitations=[SOURCE_LINE_TOO_LARGE],
             truncated=True,
         )
     return RangeResult(
@@ -212,65 +260,10 @@ def read_file(path: str | Path, start: int, end: int, *, maximum: int = 24_000) 
 
 __all__ = [
     "SOURCE_LINE_TOO_LARGE",
-    "SOURCE_RANGE_CLAMPED",
     "SOURCE_TRUNCATED",
     "RangeError",
     "RangeResult",
     "count_lines",
-    "read_file",
-    "read_range",
-    "split_lines",
-]
-
-
-### app/linewindow/__init__.py (revision 1)
-source: app/linewindow/__init__.py
-
-# Copyright (c) 2026 OceanBase.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""A small library that reads a line range out of a text file.
-
-The package is the business project of this competition entry. It exists so
-that the specification driven development task has a runnable project with its
-own test suite:
-
-``linewindow.reader``
-    The range reader under change.
-``tests/test_reader.py``
-    The behaviour that must survive the change.
-``tests/test_reader_range_clamp.py``
-    The new behaviour demanded by SPEC-001.
-
-The range reader is derived from the ``GraphQuery.read`` method of
-PowerContext (``src/powercontext/builtin/code/query.py``, Apache-2.0). The
-line splitting, the byte budget and the limitation vocabulary are kept; the
-module boundary is rewritten so that the project runs on its own without the
-PowerContext package. The change applied for this task is listed in
-``minimax/docs/technical_notes.md``.
-"""
-
-from linewindow.indexer import Definition, find_definition, index_definitions, index_file
-from linewindow.reader import RangeResult, count_lines, read_file, read_range, split_lines
-
-__all__ = [
-    "Definition",
-    "RangeResult",
-    "count_lines",
-    "find_definition",
-    "index_definitions",
-    "index_file",
     "read_file",
     "read_range",
     "split_lines",
