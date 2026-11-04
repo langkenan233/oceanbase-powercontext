@@ -11,13 +11,13 @@
 要求 Node.js 20 或更高版本，以及支持 WebGPU 的最新版 Chrome / Edge。
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 npm start
 ```
 
 浏览器打开 <http://127.0.0.1:5173>。
 
-`--legacy-peer-deps` 是必需的：`seekdb` 包传递依赖的 `@seekdb/default-embed` 在 `peerDependencies` 中保留了 monorepo 的 `workspace:*` 协议，npm 默认会直接报 `EUNSUPPORTEDPROTOCOL` 并中止安装。
+仓库内的 `.npmrc` 打开了 `legacy-peer-deps`。原因是 `seekdb` 传递依赖的 `@seekdb/default-embed` 在 `peerDependencies` 中保留了 monorepo 的 `workspace:*` 协议，npm 默认会直接报 `EUNSUPPORTEDPROTOCOL` 并中止安装。
 
 模型文件随仓库提供，启动后从本地 `models/` 目录加载，不访问任何外部网络。若该目录缺失，执行：
 
