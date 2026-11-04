@@ -1,0 +1,40 @@
+# seekdb query record
+# timestamp: 2026-11-04T08:13:11+00:00
+# host: 127.0.0.1:2881
+# database: sdd_context
+
+server version: 5.7.25-OceanBase seekdb-v1.4.0.0
+tables: ['sdd_code', 'sdd_import_log', 'sdd_spec', 'sdd_test']
+
+## row counts
+code: 4
+spec: 1
+test: 3
+
+## retrieval query
+SELECT kind, item_id, title, source_path, revision FROM (
+  SELECT 'spec' AS kind, spec_id AS item_id, title, body, source_path, revision
+    FROM sdd_spec WHERE <keyword>
+  UNION ALL
+  SELECT 'code' AS kind, code_id AS item_id, title, body, source_path, revision
+    FROM sdd_code WHERE <keyword>
+  UNION ALL
+  SELECT 'test' AS kind, test_id AS item_id, title, body, source_path, revision
+    FROM sdd_test WHERE <keyword>
+) AS matched ORDER BY kind, item_id LIMIT 24
+keywords: ['read_range', 'source_range_clamped', 'clamp', 'limitations']
+
+## rows returned
+code  app/linewindow/__init__.py                 revision=1 source=app/linewindow/__init__.py
+code  app/linewindow/__main__.py                 revision=1 source=app/linewindow/__main__.py
+code  app/linewindow/indexer.py                  revision=1 source=app/linewindow/indexer.py
+code  app/linewindow/reader.py                   revision=1 source=app/linewindow/reader.py
+spec  SPEC-001-read-range-clamp                  revision=1 source=specs/SPEC-001-read-range-clamp.md
+test  app/tests/test_indexer.py                  revision=1 source=app/tests/test_indexer.py
+test  app/tests/test_reader.py                   revision=1 source=app/tests/test_reader.py
+test  app/tests/test_reader_range_clamp.py       revision=1 source=app/tests/test_reader_range_clamp.py
+rows: 8
+
+## stored specification
+SPEC-001-read-range-clamp revision=1 source=specs/SPEC-001-read-range-clamp.md
+  first line: # SPEC-001 代码读取范围超出文件行数时必须报告截断

@@ -1,0 +1,51 @@
+# verification of the SPEC-001 code change
+# timestamp: 2026-11-04T08:12:37+00:00
+# code_version:
+commit=b3106895761a964056edded6964f4ecf9032b133
+branch=2026-competition
+workload_tree=dirty
+
+## restore the state before the change
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe D:\杂项工作空间\OceanBase比赛\PowerContext\minimax\scripts\reset_workload.py --state before
+# exit_code: 0
+
+restored minimax/workload/app/linewindow/reader.py
+restored minimax/workload/specs/SPEC-001-read-range-clamp.md
+state: before
+
+
+## target tests before the change
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe D:\杂项工作空间\OceanBase比赛\PowerContext\minimax\scripts\run_tests.py target-before
+# exit_code: 1
+
+target-before: exit_code=1 log=minimax\logs\target-before.log
+
+
+## apply the patch produced by MiniMax
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m sddctx apply --patch D:\杂项工作空间\OceanBase比赛\PowerContext\minimax\logs\minimax_patch.diff
+# exit_code: 0
+
+{
+  "applied": true,
+  "patch_file": "D:\\杂项工作空间\\OceanBase比赛\\PowerContext\\minimax\\logs\\minimax_patch.diff",
+  "touched_files": [
+    "minimax/workload/app/linewindow/reader.py"
+  ]
+}
+
+
+## target tests after the change
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe D:\杂项工作空间\OceanBase比赛\PowerContext\minimax\scripts\run_tests.py target-after
+# exit_code: 0
+
+target-after: exit_code=0 log=minimax\logs\target-after.log
+
+
+## regression tests after the change
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe D:\杂项工作空间\OceanBase比赛\PowerContext\minimax\scripts\run_tests.py regression
+# exit_code: 0
+
+regression: exit_code=0 log=minimax\logs\regression.log
+
+
+# failed_steps: none

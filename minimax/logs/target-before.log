@@ -1,0 +1,107 @@
+# suite: target-before
+# timestamp: 2026-11-04T08:12:39+00:00
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m pytest minimax/workload/app/tests/test_reader_range_clamp.py -v
+# exit_code: 1
+# code_version:
+commit=b3106895761a964056edded6964f4ecf9032b133
+branch=2026-competition
+workload_tree=dirty
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe
+cachedir: .pytest_cache
+rootdir: D:\杂项工作空间\OceanBase比赛\PowerContext
+configfile: pyproject.toml
+plugins: anyio-4.16.0, platformdirs-4.14.3
+collecting ... collected 12 items
+
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_beyond_the_last_line_is_clamped_to_the_file_length PASSED [  8%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_beyond_the_last_line_reports_the_clamp FAILED [ 16%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_inside_the_file_reports_no_clamp PASSED [ 25%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_ending_exactly_at_the_last_line_reports_no_clamp PASSED [ 33%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_and_snippet_truncation_are_reported_together FAILED [ 41%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_start_beyond_the_last_line_is_still_rejected PASSED [ 50%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_reading_inside_the_file_is_unchanged PASSED [ 58%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_reading_a_single_line_is_unchanged PASSED [ 66%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_is_reported_for_a_single_line_file FAILED [ 75%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_repeated_reads_keep_reporting_the_clamp FAILED [ 83%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_empty_content_does_not_raise_and_reports_the_clamp FAILED [ 91%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_read_file_reports_the_clamp FAILED [100%]
+
+================================== FAILURES ===================================
+______________ test_range_beyond_the_last_line_reports_the_clamp ______________
+
+    def test_range_beyond_the_last_line_reports_the_clamp() -> None:
+        result = read_range(SOURCE, 2, 40)
+    
+>       assert CLAMPED in result.limitations
+E       AssertionError: assert 'source_range_clamped' in []
+E        +  where [] = RangeResult(path='<memory>', start_line=2, end_line=4, content='beta\ngamma\ndelta\n', limitations=[], truncated=False, snippet_sha256='1f61cf99fdd0472fadec301f0360461315b1cfe7af91abdb777ef9618c567ca5').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:47: AssertionError
+___________ test_clamp_and_snippet_truncation_are_reported_together ___________
+
+    def test_clamp_and_snippet_truncation_are_reported_together() -> None:
+        result = read_range("alpha\n" + ("x" * 100) + "\nbeta\n", 1, 40, maximum=20)
+    
+>       assert CLAMPED in result.limitations
+E       AssertionError: assert 'source_range_clamped' in ['source_truncated']
+E        +  where ['source_truncated'] = RangeResult(path='<memory>', start_line=1, end_line=1, content='alpha\n', limitations=['source_truncated'], truncated=True, snippet_sha256='b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:66: AssertionError
+________________ test_clamp_is_reported_for_a_single_line_file ________________
+
+    def test_clamp_is_reported_for_a_single_line_file() -> None:
+        result = read_range("only\n", 1, 9)
+    
+        assert result.end_line == 1
+>       assert CLAMPED in result.limitations
+E       AssertionError: assert 'source_range_clamped' in []
+E        +  where [] = RangeResult(path='<memory>', start_line=1, end_line=1, content='only\n', limitations=[], truncated=False, snippet_sha256='321b4285d2fec34a6dc5b6fdb1ab9ee46b1a3129c83e52a00a713a38bac0fe00').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:96: AssertionError
+________________ test_repeated_reads_keep_reporting_the_clamp _________________
+
+    def test_repeated_reads_keep_reporting_the_clamp() -> None:
+        first = read_range(SOURCE, 1, 40)
+        second = read_range(SOURCE, 2, 40)
+    
+>       assert CLAMPED in first.limitations
+E       AssertionError: assert 'source_range_clamped' in []
+E        +  where [] = RangeResult(path='<memory>', start_line=1, end_line=4, content='alpha\nbeta\ngamma\ndelta\n', limitations=[], truncated=False, snippet_sha256='927c9bb49935d22cfef1df0fd954eb8011420a9b1ec2350d65647accf201bbe9').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:103: AssertionError
+___________ test_empty_content_does_not_raise_and_reports_the_clamp ___________
+
+    def test_empty_content_does_not_raise_and_reports_the_clamp() -> None:
+        result = read_range("", 1, 5)
+    
+        assert result.end_line == 1
+>       assert CLAMPED in result.limitations
+E       AssertionError: assert 'source_range_clamped' in []
+E        +  where [] = RangeResult(path='<memory>', start_line=1, end_line=1, content='', limitations=[], truncated=False, snippet_sha256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:111: AssertionError
+______________________ test_read_file_reports_the_clamp _______________________
+
+tmp_path = WindowsPath('C:/Users/intel/AppData/Local/Temp/pytest-of-intel/pytest-24/test_read_file_reports_the_cla0')
+
+    def test_read_file_reports_the_clamp(tmp_path: Path) -> None:
+        target = tmp_path / "sample.txt"
+        target.write_text(SOURCE, encoding="utf-8")
+    
+        result = read_file(target, 1, 40)
+    
+        assert result.end_line == 4
+>       assert CLAMPED in result.limitations
+E       AssertionError: assert 'source_range_clamped' in []
+E        +  where [] = RangeResult(path='C:\\Users\\intel\\AppData\\Local\\Temp\\pytest-of-intel\\pytest-24\\test_read_file_reports_the_cla0\\sample.txt', start_line=1, end_line=4, content='alpha\nbeta\ngamma\ndelta\n', limitations=[], truncated=False, snippet_sha256='927c9bb49935d22cfef1df0fd954eb8011420a9b1ec2350d65647accf201bbe9').limitations
+
+minimax\workload\app\tests\test_reader_range_clamp.py:121: AssertionError
+=========================== short test summary info ===========================
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_range_beyond_the_last_line_reports_the_clamp
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_and_snippet_truncation_are_reported_together
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_is_reported_for_a_single_line_file
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_repeated_reads_keep_reporting_the_clamp
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_empty_content_does_not_raise_and_reports_the_clamp
+FAILED minimax/workload/app/tests/test_reader_range_clamp.py::test_read_file_reports_the_clamp
+========================= 6 failed, 6 passed in 0.22s =========================

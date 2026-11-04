@@ -1,0 +1,61 @@
+diff --git a/minimax/workload/app/linewindow/reader.py b/minimax/workload/app/linewindow/reader.py
+index 597530bb..5d7c59d9 100644
+--- a/minimax/workload/app/linewindow/reader.py
++++ b/minimax/workload/app/linewindow/reader.py
+@@ -26,6 +26,7 @@ from pathlib import Path
+ 
+ SOURCE_TRUNCATED = "source_truncated"
+ SOURCE_LINE_TOO_LARGE = "source_line_too_large"
++SOURCE_RANGE_CLAMPED = "source_range_clamped"
+ 
+ 
+ class RangeError(RuntimeError):
+@@ -94,7 +95,8 @@ def read_range(
+ 
+     Line numbers are 1-based. A ``start`` beyond the last line of the content
+     is rejected. An ``end`` beyond the last line of the content is clamped to
+-    the last line.
++    the last line, and the clamp is reported as ``source_range_clamped`` so a
++    caller can tell a short content from a truncated request.
+     """
+ 
+     lines = split_lines(content)
+@@ -102,10 +104,13 @@ def read_range(
+         lines = [""]
+     if start > len(lines):
+         raise RangeError("code_range_missing", f"line {start} is beyond the end of {path}")
+-    end = min(end, len(lines))
+-    selected = bytearray()
+     limitations: list[str] = []
+     truncated = False
++    if end > len(lines):
++        limitations.append(SOURCE_RANGE_CLAMPED)
++        truncated = True
++        end = len(lines)
++    selected = bytearray()
+     last = start - 1
+     for offset, line in enumerate(lines[start - 1 : end], start):
+         encoded = line.encode("utf-8")
+@@ -116,12 +121,13 @@ def read_range(
+         selected.extend(encoded)
+         last = offset
+     if last < start:
++        limitations.append(SOURCE_LINE_TOO_LARGE)
+         return RangeResult(
+             path=path,
+             start_line=start,
+             end_line=last,
+             content="",
+-            limitations=[SOURCE_LINE_TOO_LARGE],
++            limitations=limitations,
+             truncated=True,
+         )
+     return RangeResult(
+@@ -144,6 +150,7 @@ def read_file(path: str | Path, start: int, end: int, *, maximum: int = 24_000)
+ 
+ __all__ = [
+     "SOURCE_LINE_TOO_LARGE",
++    "SOURCE_RANGE_CLAMPED",
+     "SOURCE_TRUNCATED",
+     "RangeError",
+     "RangeResult",

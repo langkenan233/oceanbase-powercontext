@@ -1,0 +1,27 @@
+# PowerContext state record
+# timestamp: 2026-11-04T08:13:12+00:00
+# server: http://127.0.0.1:8000
+
+## health check
+GET http://127.0.0.1:8000/health/live -> True
+
+## scope
+scope_id: scp_44aaz7yqmcxm3ssdf43y3y580q
+
+## write
+POST http://127.0.0.1:8000/v1/memory/remember
+scope_id: scp_44aaz7yqmcxm3ssdf43y3y580q
+kind: sdd_task_state
+text: {"completed": ["Imported the specification, the code and the tests into seekdb", "Produced the patch with MiniMax and applied it with the module"], "context_digest": "e5fabcf1dfbc6931", "objective": "Implement SPEC-001: report a clamped line range when the requested end exceeds the content length", "task_id": "sdd-task-001", "todo": ["Re-import the updated specification and rebuild the context"], "updated_at": "", "verification": [{"name": "target_tests_before", "result": "6 failed, exit code 1"}, {"name": "target_tests_after", "result": "12 passed, exit code 0"}]}
+response: {"memory": {"family": "memory", "artifact_id": "memory", "revision": 11}, "entry": {"citation": {"memory_ref": {"family": "memory", "artifact_id": "memory", "revision": 11}, "entry_id": "mem_ent_b9c8835fa9194c18b5e056b272661a13", "entry_version_id": "mem_ver_f36616881e1f47c7b83eddbbd7abb8d8"}, "version": 1, "kind": "sdd_task_state", "text": "{\"completed\": [\"Imported the specification, the code 
+
+## read
+POST http://127.0.0.1:8000/v1/memory/entries/list
+restored: {"task_id": "sdd-task-001", "objective": "Implement SPEC-001: report a clamped line range when the requested end exceeds the content length", "completed": ["Imported the specification, the code and the tests into seekdb", "Produced the patch with MiniMax and applied it with the module"], "todo": ["Re-import the updated specification and rebuild the context"], "verification": [{"name": "target_tests_before", "result": "6 failed, exit code 1"}, {"name": "target_tests_after", "result": "12 passed, exit code 0"}], "context_digest": "e5fabcf1dfbc6931", "updated_at": "2026-11-04T08:13:12+00:00"}
+
+## the stored state is part of the next context
+## Progress recorded earlier
+- [done] Imported the specification, the code and the tests into seekdb
+- [done] Produced the patch with MiniMax and applied it with the module
+- [open] Re-import the updated specification and rebuild the context
+

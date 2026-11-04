@@ -1,0 +1,27 @@
+# Runtime state of the SDD context module.
+#
+# The PowerContext Server keeps its task state under POWERCONTEXT_HOME, which
+# minimax/scripts/start_server.py points at minimax/data.
+data/
+
+# The module environment file carries the MiniMax credential. Keep it out of
+# version control and start from env/sddctx.env.example.
+sddctx.env
+
+# The repository root ignores *.log. The evidence logs under logs/ are part of
+# the submission, so they are tracked again here. The paths are relative to
+# this file, which lives in minimax/.
+!logs/*.log
+
+# The server runtime log stays out of version control.
+logs/powercontext_server.log
+
+# The repository root ignores directories named ENV. The templates under env/
+# are part of the submission.
+!env/
+
+# Tool caches.
+.ruff_cache/
+__pycache__/
+*.pyc
+.pytest_cache/

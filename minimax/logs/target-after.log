@@ -1,0 +1,30 @@
+# suite: target-after
+# timestamp: 2026-11-04T08:12:42+00:00
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m pytest minimax/workload/app/tests/test_reader_range_clamp.py -v
+# exit_code: 0
+# code_version:
+commit=b3106895761a964056edded6964f4ecf9032b133
+branch=2026-competition
+workload_tree=dirty
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe
+cachedir: .pytest_cache
+rootdir: D:\杂项工作空间\OceanBase比赛\PowerContext
+configfile: pyproject.toml
+plugins: anyio-4.16.0, platformdirs-4.14.3
+collecting ... collected 12 items
+
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_beyond_the_last_line_is_clamped_to_the_file_length PASSED [  8%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_beyond_the_last_line_reports_the_clamp PASSED [ 16%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_inside_the_file_reports_no_clamp PASSED [ 25%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_range_ending_exactly_at_the_last_line_reports_no_clamp PASSED [ 33%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_and_snippet_truncation_are_reported_together PASSED [ 41%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_start_beyond_the_last_line_is_still_rejected PASSED [ 50%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_reading_inside_the_file_is_unchanged PASSED [ 58%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_reading_a_single_line_is_unchanged PASSED [ 66%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_clamp_is_reported_for_a_single_line_file PASSED [ 75%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_repeated_reads_keep_reporting_the_clamp PASSED [ 83%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_empty_content_does_not_raise_and_reports_the_clamp PASSED [ 91%]
+minimax/workload/app/tests/test_reader_range_clamp.py::test_read_file_reports_the_clamp PASSED [100%]
+
+============================= 12 passed in 0.12s ==============================

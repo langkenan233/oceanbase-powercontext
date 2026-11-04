@@ -1,0 +1,40 @@
+# suite: regression
+# timestamp: 2026-11-04T08:12:43+00:00
+# command: C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe -m pytest minimax/workload/app/tests/test_reader.py minimax/workload/app/tests/test_indexer.py -v
+# exit_code: 0
+# code_version:
+commit=b3106895761a964056edded6964f4ecf9032b133
+branch=2026-competition
+workload_tree=dirty
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\intel\.workbuddy\binaries\python\versions\3.13.12\python.exe
+cachedir: .pytest_cache
+rootdir: D:\杂项工作空间\OceanBase比赛\PowerContext
+configfile: pyproject.toml
+plugins: anyio-4.16.0, platformdirs-4.14.3
+collecting ... collected 22 items
+
+minimax/workload/app/tests/test_reader.py::test_split_lines_keeps_the_line_ending PASSED [  4%]
+minimax/workload/app/tests/test_reader.py::test_split_lines_does_not_open_an_empty_last_line PASSED [  9%]
+minimax/workload/app/tests/test_reader.py::test_split_lines_keeps_a_last_line_without_a_ending PASSED [ 13%]
+minimax/workload/app/tests/test_reader.py::test_split_lines_of_empty_content_is_empty PASSED [ 18%]
+minimax/workload/app/tests/test_reader.py::test_count_lines_counts_physical_lines PASSED [ 22%]
+minimax/workload/app/tests/test_reader.py::test_read_range_returns_the_requested_lines PASSED [ 27%]
+minimax/workload/app/tests/test_reader.py::test_read_range_returns_a_single_line PASSED [ 31%]
+minimax/workload/app/tests/test_reader.py::test_read_range_starts_at_the_first_line PASSED [ 36%]
+minimax/workload/app/tests/test_reader.py::test_read_range_rejects_a_start_beyond_the_last_line PASSED [ 40%]
+minimax/workload/app/tests/test_reader.py::test_read_range_reports_a_truncated_snippet PASSED [ 45%]
+minimax/workload/app/tests/test_reader.py::test_read_range_reports_a_line_that_does_not_fit PASSED [ 50%]
+minimax/workload/app/tests/test_reader.py::test_read_range_of_empty_content_returns_one_empty_line PASSED [ 54%]
+minimax/workload/app/tests/test_reader.py::test_read_file_reads_the_range_from_disk PASSED [ 59%]
+minimax/workload/app/tests/test_reader.py::test_read_file_rejects_a_start_beyond_the_last_line PASSED [ 63%]
+minimax/workload/app/tests/test_reader.py::test_read_range_reports_the_snippet_digest PASSED [ 68%]
+minimax/workload/app/tests/test_indexer.py::test_index_definitions_finds_the_top_level_definitions PASSED [ 72%]
+minimax/workload/app/tests/test_indexer.py::test_index_definitions_reports_the_kind PASSED [ 77%]
+minimax/workload/app/tests/test_indexer.py::test_index_definitions_reports_the_line_numbers PASSED [ 81%]
+minimax/workload/app/tests/test_indexer.py::test_find_definition_returns_the_definition PASSED [ 86%]
+minimax/workload/app/tests/test_indexer.py::test_find_definition_returns_none_for_an_unknown_name PASSED [ 90%]
+minimax/workload/app/tests/test_indexer.py::test_index_file_reads_the_definitions PASSED [ 95%]
+minimax/workload/app/tests/test_indexer.py::test_definition_to_dict_is_json_friendly PASSED [100%]
+
+============================= 22 passed in 0.14s ==============================

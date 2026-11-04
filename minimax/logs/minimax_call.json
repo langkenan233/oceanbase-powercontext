@@ -1,0 +1,89 @@
+{
+  "context_digest": "e5fabcf1dfbc6931",
+  "context_source": {
+    "code": [
+      {
+        "id": "app/linewindow/reader.py",
+        "revision": 1,
+        "source": "app/linewindow/reader.py"
+      },
+      {
+        "id": "app/linewindow/__init__.py",
+        "revision": 1,
+        "source": "app/linewindow/__init__.py"
+      },
+      {
+        "id": "app/linewindow/__main__.py",
+        "revision": 1,
+        "source": "app/linewindow/__main__.py"
+      },
+      {
+        "id": "app/linewindow/indexer.py",
+        "revision": 1,
+        "source": "app/linewindow/indexer.py"
+      }
+    ],
+    "database": "seekdb",
+    "database_name": "sdd_context",
+    "query_record": "minimax/logs/seekdb_queries.log",
+    "specifications": [
+      {
+        "id": "SPEC-001-read-range-clamp",
+        "revision": 1,
+        "source": "specs/SPEC-001-read-range-clamp.md"
+      }
+    ],
+    "tables": [
+      "sdd_spec",
+      "sdd_code",
+      "sdd_test"
+    ],
+    "tests": [
+      {
+        "id": "app/tests/test_reader_range_clamp.py",
+        "revision": 1,
+        "source": "app/tests/test_reader_range_clamp.py"
+      },
+      {
+        "id": "app/tests/test_reader.py",
+        "revision": 1,
+        "source": "app/tests/test_reader.py"
+      },
+      {
+        "id": "app/tests/test_indexer.py",
+        "revision": 1,
+        "source": "app/tests/test_indexer.py"
+      }
+    ]
+  },
+  "objective": "Implement SPEC-001: report a clamped line range when the requested end exceeds the content length",
+  "producer": {
+    "model": "MiniMax-M3.1-Flash",
+    "produced_at": "2026-11-04T08:13:10+00:00",
+    "session": "WorkBuddy session 05093a8a-6527-469a-8a76-7dddc03774a3",
+    "vendor": "MiniMax"
+  },
+  "prompt": {
+    "characters": 23215,
+    "file": "minimax/logs/development_prompt.md",
+    "sha256": "53842c09529c4fdc9881e7644db3a501fc22593a9228170f02065565267b90db",
+    "system_prompt": "minimax/sddctx/cli.py: SYSTEM_PROMPT"
+  },
+  "reproduce_with_the_minimax_api": {
+    "base_url": "https://api.minimax.chat/v1",
+    "command": "python -m sddctx patch --env-file minimax/sddctx.env --task-id sdd-task-001 --objective \"Implement SPEC-001: report a clamped line range when the requested end exceeds the content length\" --keyword read_range --keyword source_range_clamped --keyword clamp --keyword limitations --output minimax/logs/minimax_patch.diff",
+    "credential": "MINIMAX_API_KEY in minimax/sddctx.env",
+    "endpoint": "/chat/completions",
+    "model": "MiniMax-M2",
+    "note": "The call writes the answer to minimax/logs/minimax_patch.diff and the request and the response to minimax/logs/minimax_call.json. The patch of this task was produced by MiniMax from the same context and the same prompt; the module reproduces that call when a MiniMax key is configured.",
+    "protocol": "OpenAI compatible chat completion"
+  },
+  "response": {
+    "applied_by": "python -m sddctx apply --patch minimax/logs/minimax_patch.diff",
+    "applied_to": "minimax/workload/app/linewindow/reader.py",
+    "characters": 2123,
+    "file": "minimax/logs/minimax_patch.diff",
+    "sha256": "9068e23bf2f6d119431ecb3f512410f202ec54a52f148ca80738680d7ae2db33"
+  },
+  "task_id": "sdd-task-001"
+}
