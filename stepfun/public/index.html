@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>本地知识库 · 端侧向量化 + seekdb 混合检索</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">KB</span>
+    <div>
+      <h1>本地知识库</h1>
+      <p>浏览器端向量化 · seekdb 混合检索</p>
+    </div>
+  </div>
+  <div class="badges">
+    <span class="badge" id="backendBadge" title="端侧推理后端">等待加载模型</span>
+    <span class="badge ghost" id="modelBadge">bge-small-zh-v1.5</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <section class="block">
+      <div class="block-head">
+        <h2>知识库</h2>
+      </div>
+      <ul class="kb-list" id="kbList"></ul>
+      <div class="inline-form">
+        <input id="newKbName" type="text" placeholder="新知识库名称" maxlength="32" />
+        <button id="createKb" class="btn small">新建</button>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h2>运行状态</h2></div>
+      <dl class="kv">
+        <dt>推理后端</dt><dd id="kvBackend">—</dd>
+        <dt>模型精度</dt><dd id="kvDtype">—</dd>
+        <dt>模型加载</dt><dd id="kvLoad">—</dd>
+        <dt>向量维度</dt><dd id="kvDim">—</dd>
+        <dt>片段总数</dt><dd id="kvCount">—</dd>
+        <dt>数据目录</dt><dd id="kvDir" class="mono small"></dd>
+      </dl>
+    </section>
+  </aside>
+
+  <section class="content">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>导入语料</h2>
+        <div class="panel-actions">
+          <label class="field inline">
+            <span>模型精度</span>
+            <select id="dtype">
+              <option value="auto" selected>自动（GPU 用 FP16 / CPU 用 INT8）</option>
+              <option value="fp16">FP16</option>
+              <option value="q8">INT8</option>
+              <option value="fp32">FP32</option>
+            </select>
+          </label>
+          <label class="field inline">
+            <span>批大小</span>
+            <select id="batchSize">
+              <option value="1">1</option>
+              <option value="4">4</option>
+              <option value="8" selected>8</option>
+              <option value="16">16</option>
+              <option value="32">32</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <p class="drop-title">拖入 .txt / .md 文件，或点击选择</p>
+        <p class="drop-hint">文件内容在浏览器内切分并向量化，向量与原文写入 seekdb</p>
+        <input type="file" id="fileInput" multiple accept=".txt,.md,.markdown,text/plain,text/markdown" hidden />
+      </div>
+
+      <div class="row">
+        <button class="btn" id="loadSample">载入示例语料</button>
+        <span class="hint" id="importHint">示例语料包含 40 篇中文短文，覆盖向量检索、浏览器推理与数据库主题</span>
+      </div>
+
+      <div class="progress" id="progress" hidden>
+        <div class="progress-bar"><i id="progressFill"></i></div>
+        <div class="progress-text" id="progressText"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>检索</h2>
+        <div class="panel-actions">
+          <label class="field inline">
+            <span>返回条数</span>
+            <select id="topK">
+              <option>5</option>
+              <option selected>10</option>
+              <option>20</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <form class="searchbar" id="searchForm">
+        <input id="query" type="search" placeholder="输入问题，例如：浏览器不支持 WebGPU 时怎么降级" autocomplete="off" />
+        <button class="btn primary" type="submit" id="searchBtn">检索</button>
+      </form>
+
+      <div class="search-meta" id="searchMeta"></div>
+      <ol class="results" id="results"></ol>
+    </section>
+  </section>
+</main>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "seekdb-local-kb",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-local embedding + seekdb hybrid retrieval knowledge base",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "setup": "node scripts/download-model.mjs",
+    "bench": "node scripts/bench-node.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.6",
+    "@oceanbase/seekdb-node": "^1.4.0",
+    "seekdb": "^1.4.0"
+  }
+}

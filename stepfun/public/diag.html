@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>端侧推理诊断</title>
+<style>
+  body { font: 13px/1.7 ui-monospace, Menlo, Consolas, monospace; margin: 24px; color: #1b1f24; }
+  h1 { font-size: 15px; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  pre { background: #f6f7f9; padding: 12px; border-radius: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>端侧推理诊断</h1>
+<p>同一段文本与其自身的向量应完全一致；与无关文本的相似度应明显更低。</p>
+<pre id="out">running…</pre>
+<script type="module">
+import { pipeline, env } from "/vendor/transformers.min.js";
+
+env.allowRemoteModels = false;
+env.allowLocalModels = true;
+env.localModelPath = "/models/";
+env.backends.onnx.wasm.wasmPaths = "/vendor/";
+
+const params = new URLSearchParams(location.search);
+const device = params.get("device") || "webgpu";
+const dtype = params.get("dtype") || "q8";
+const out = document.getElementById("out");
+const log = (s) => { out.textContent = s; };
+
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+
+(async () => {
+  const lines = [`device=${device} dtype=${dtype}`];
+  try {
+    const t0 = performance.now();
+    const ex = await pipeline("feature-extraction", "bge-small-zh-v1.5", { device, dtype });
+    lines.push(`load_ms=${Math.round(performance.now() - t0)}`);
+
+    const enc = async (texts) => {
+      const o = await ex(texts, { pooling: "cls", normalize: true });
+      const [rows, cols] = o.dims;
+      return Array.from({ length: rows }, (_, r) => Array.from(o.data.slice(r * cols, (r + 1) * cols)));
+    };
+
+    const A = "HNSW 索引把向量组织成多层可导航小世界图，参数 M 控制邻居数量。";
+    const B = "把 embedding 请求发到云端接口会增加网络延迟，原文也会离开设备。";
+    const [a1, a2, b] = await enc([A, A, B]);
+
+    lines.push(`dim=${a1.length}`);
+    lines.push(`self_cos=${dot(a1, a2).toFixed(6)}`);
+    lines.push(`other_cos=${dot(a1, b).toFixed(6)}`);
+    lines.push(`norm=${Math.sqrt(dot(a1, a1)).toFixed(6)}`);
+
+    // Repeatability across a batch boundary: a correct backend returns the same
+    // vector whether the text is encoded alone or inside a batch.
+    const [solo] = await enc([A]);
+    lines.push(`batch_cos=${dot(a1, solo).toFixed(6)}`);
+
+    const t1 = performance.now();
+    const texts = Array.from({ length: 16 }, (_, i) => `第 ${i} 段用于测量吞吐的测试文本，内容与主题无关。`);
+    await enc(texts);
+    lines.push(`batch16_ms=${Math.round(performance.now() - t1)}`);
+
+    // Batch size sweep: same 32 texts, different batch widths. This is what the
+    // "batch before/after" number in the write-up comes from.
+    const corpus = Array.from({ length: 32 }, (_, i) =>
+      `第 ${i} 段用于批量吞吐测试的文本，主题各不相同，长度接近真实知识库片段。`
+    );
+    for (const size of [1, 4, 8, 16, 32]) {
+      const start = performance.now();
+      for (let i = 0; i < corpus.length; i += size) await enc(corpus.slice(i, i + size));
+      const ms = performance.now() - start;
+      lines.push(`batch${size}_ms=${Math.round(ms)} per_s=${(corpus.length / (ms / 1000)).toFixed(1)}`);
+    }
+  } catch (err) {
+    lines.push(`ERROR ${err.message}`);
+  }
+  log(lines.join("\n"));
+  window.__diagDone = true;
+})();
+</script>
+</body>
+</html>
