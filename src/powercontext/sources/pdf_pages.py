@@ -245,7 +245,11 @@ _METRIC_CUES = (
 _METRIC_CUES_MULTI = tuple(cue for cue in _METRIC_CUES if len(cue.split()) > 1)
 _METRIC_CUES_MULTI_COMPACT = tuple(_COMPACT.sub("", cue) for cue in _METRIC_CUES_MULTI)
 
-_INDEX_CACHE: OrderedDict[tuple[str, int, int], _PageIndex] = OrderedDict()
+# The artifact id and the revision are process-wide constants, and every evaluation group has
+# the same number of pages. A key made of those three values alone lets one database reuse the
+# index of another one and hand out citations that cannot be read back. Bind the cache to the
+# live scoped Memory and to the first and last entry it was built from instead.
+_INDEX_CACHE: OrderedDict[tuple[int, str, int, int, str, str], tuple[object, _PageIndex]] = OrderedDict()
 
 
 class PDFDocumentInput(BaseModel):
@@ -424,7 +428,7 @@ async def search_pdf_pages(memory, question: str, limit: int = 10) -> tuple[Memo
     if limit < 1:
         return ()
     listing = await memory.list()
-    index = _index_for(listing)
+    index = _index_for(memory, listing)
     if not index.identifiers:
         hits = await _search_candidates(memory, query, limit)
         if not hits:
@@ -451,21 +455,27 @@ async def _search_candidates(memory, query: str, limit: int) -> tuple[MemoryHit,
     return page.hits
 
 
-def _index_for(listing: MemoryEntriesPage) -> _PageIndex:
+def _index_for(memory, listing: MemoryEntriesPage) -> _PageIndex:
     """Build the page model once per stored Memory revision and reuse it across questions."""
 
     reference = listing.memory_ref
+    entries = listing.entries
     key = (
+        id(memory),
         reference.artifact_id if reference is not None else "",
         reference.revision if reference is not None else 0,
-        len(listing.entries),
+        len(entries),
+        str(entries[0].citation.entry_id) if entries else "",
+        str(entries[-1].citation.entry_id) if entries else "",
     )
     cached = _INDEX_CACHE.get(key)
-    if cached is not None:
+    if cached is not None and cached[0] is memory:
         _INDEX_CACHE.move_to_end(key)
-        return cached
+        return cached[1]
     index = _PageIndex(listing)
-    _INDEX_CACHE[key] = index
+    # Keep the Memory alive with its index: an id() key is unambiguous only while the object
+    # it came from cannot be collected and have its id reused by a later database.
+    _INDEX_CACHE[key] = (memory, index)
     while len(_INDEX_CACHE) > _INDEX_CACHE_SIZE:
         _INDEX_CACHE.popitem(last=False)
     return index
